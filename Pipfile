@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
+duckdb = "*"
+python-dotenv = "*"
+google-auth = "*"
+google-auth-oauthlib = "*"
+google-api-python-client = "*"
+anthropic = "*"
+jinja2 = "*"
+python-multipart = "*"
+httpx = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.12"
+python_full_version = "3.12.3"
