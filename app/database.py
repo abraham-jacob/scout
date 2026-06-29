@@ -54,12 +54,28 @@ def init_db():
             apply_platform      VARCHAR,
             status              VARCHAR DEFAULT 'new',
             seen                BOOLEAN DEFAULT false,
+            is_repost           BOOLEAN DEFAULT false,
+            original_job_id     VARCHAR,
             date_scraped        TIMESTAMP DEFAULT current_timestamp,
             applied_at          TIMESTAMP,
             rejected_at         TIMESTAMP
         )
     """)
     conn.close()
+
+
+def find_original_job(conn: duckdb.DuckDBPyConnection, title: str, company: str) -> str | None:
+    """Return the job_id of an existing active job with the same title and company, or None."""
+    row = conn.execute("""
+        SELECT job_id FROM jobs
+        WHERE lower(title) = lower(?)
+          AND lower(company) = lower(?)
+          AND status != 'dismissed'
+          AND is_repost = false
+        ORDER BY date_scraped ASC
+        LIMIT 1
+    """, [title, company]).fetchone()
+    return row[0] if row else None
 
 
 if __name__ == "__main__":
