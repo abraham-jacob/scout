@@ -1,0 +1,142 @@
+{% set status_accent = {
+  'new':                    'border-l-fuchsia-400',
+  'saved':                  'border-l-amber-400',
+  'applied':                'border-l-emerald-400',
+  'interviewing_recruiter': 'border-l-purple-400',
+  'interviewing_technical': 'border-l-indigo-400',
+  'offer':                  'border-l-lime-400',
+  'rejected':               'border-l-rose-400',
+  'dismissed':              'border-l-slate-500',
+} %}
+
+{% set status_badge = {
+  'new':                    'bg-fuchsia-500/20 text-fuchsia-300 ring-fuchsia-400/30',
+  'saved':                  'bg-amber-500/20 text-amber-300 ring-amber-400/30',
+  'applied':                'bg-emerald-500/20 text-emerald-300 ring-emerald-400/30',
+  'interviewing_recruiter': 'bg-purple-500/20 text-purple-300 ring-purple-400/30',
+  'interviewing_technical': 'bg-indigo-500/20 text-indigo-300 ring-indigo-400/30',
+  'offer':                  'bg-lime-500/20 text-lime-300 ring-lime-400/30',
+  'rejected':               'bg-rose-500/20 text-rose-300 ring-rose-400/30',
+  'dismissed':              'bg-slate-500/20 text-slate-400 ring-slate-500/30',
+} %}
+
+{% set platform_colors = {
+  'easy_apply': 'bg-blue-600 text-white',
+  'greenhouse': 'bg-green-600 text-white',
+  'ashby':      'bg-orange-500 text-white',
+  'workday':    'bg-sky-600 text-white',
+  'other':      'bg-slate-600 text-slate-200',
+} %}
+
+{% set platform_labels = {
+  'easy_apply': 'Easy Apply',
+  'greenhouse': 'Greenhouse',
+  'ashby':      'Ashby',
+  'workday':    'Workday',
+  'other':      'Apply',
+} %}
+
+{% set role_colors = {
+  'Manager': 'bg-violet-600 text-white',
+  'IC':      'bg-teal-600 text-white',
+} %}
+
+<div id="job-{{ job.job_id }}"
+     class="bg-slate-700 border border-slate-600 border-l-[14px] {{ status_accent.get(job.status, 'border-l-slate-500') }} rounded-xl p-5 hover:bg-slate-650 hover:shadow-lg transition-all">
+
+  <!-- Top row: title + badges -->
+  <div class="flex items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h3 class="font-semibold text-white text-lg leading-snug truncate">{{ job.title }}</h3>
+      <p class="text-base text-slate-200 mt-0.5">
+        <span class="text-lime-400 font-semibold">{{ job.company }}</span>
+        {% if job.location %} &middot; {{ job.location }}{% endif %}
+      </p>
+    </div>
+
+    <div class="flex flex-col items-end gap-1.5 shrink-0">
+      <span class="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-medium ring-1 ring-inset {{ status_badge.get(job.status, 'bg-slate-500/20 text-slate-300 ring-slate-400/30') }}">
+        {{ job.status | replace('_', ' ') }}
+      </span>
+      <span class="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium {{ platform_colors.get(job.apply_platform, 'bg-slate-600 text-slate-200') }}">
+        {{ platform_labels.get(job.apply_platform, job.apply_platform) }}
+      </span>
+    </div>
+  </div>
+
+  <!-- role + repost + salary -->
+  <div class="flex items-center gap-3 mt-2">
+    {% if job.role_type %}
+    <span class="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium {{ role_colors.get(job.role_type, 'bg-slate-600 text-slate-200') }}">
+      {{ job.role_type }}
+    </span>
+    {% endif %}
+    {% if job.is_repost %}
+    <span class="text-sm text-amber-400 font-medium">Repost</span>
+    {% endif %}
+    {% if job.salary_range %}
+    <span class="text-base font-medium text-emerald-400">{{ job.salary_range }}</span>
+    {% endif %}
+  </div>
+
+  <!-- Summary (always visible) -->
+  {% if job.description_summary %}
+  <p class="mt-3 text-sm text-slate-200 leading-relaxed">{{ job.description_summary }}</p>
+  {% endif %}
+
+  <!-- Full description toggle -->
+  <div class="mt-3">
+    <button id="desc-btn-{{ job.job_id }}"
+            onclick="toggleDesc('{{ job.job_id }}')"
+            class="text-sm text-slate-300 hover:text-white font-medium transition-colors">
+      Show full description
+    </button>
+    <div id="desc-{{ job.job_id }}"
+         class="hidden mt-3 text-sm text-slate-300 leading-relaxed whitespace-pre-line max-h-72 overflow-y-auto bg-slate-800/60 rounded-lg p-3 border border-slate-600">
+      {{ job.description_raw }}
+    </div>
+  </div>
+
+  <!-- Actions row -->
+  <div class="mt-4 pt-3 border-t border-slate-600 flex items-center justify-between gap-3">
+
+    <form hx-patch="/jobs/{{ job.job_id }}/status"
+          hx-target="#job-{{ job.job_id }}"
+          hx-swap="outerHTML">
+      <select name="status"
+              onchange="this.form.requestSubmit()"
+              class="text-sm border border-slate-500 rounded-md px-2 py-1.5 text-slate-200 bg-slate-600 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 cursor-pointer">
+        {% for s in statuses %}
+        <option value="{{ s }}" {% if s == job.status %}selected{% endif %}>
+          {{ s | replace('_', ' ') | title }}
+        </option>
+        {% endfor %}
+      </select>
+    </form>
+
+    <div class="flex items-center gap-3">
+      {% set apply_href = job.apply_url if job.apply_url else job.linkedin_url %}
+      {% if job.apply_platform == 'easy_apply' %}
+      <a href="{{ apply_href }}" target="_blank"
+         class="text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors">
+        Easy Apply ↗
+      </a>
+      {% else %}
+      <a href="{{ apply_href }}" target="_blank"
+         class="text-sm font-medium text-fuchsia-400 hover:text-fuchsia-300 transition-colors">
+        Apply ↗
+      </a>
+      {% endif %}
+      <a href="{{ job.linkedin_url }}" target="_blank"
+         class="text-sm text-slate-300 hover:text-white transition-colors">
+        LinkedIn ↗
+      </a>
+      {% if job.date_scraped %}
+      <span class="text-sm text-slate-300">
+        {{ job.date_scraped.strftime('%Y-%m-%d') if job.date_scraped.strftime is defined else job.date_scraped }}
+      </span>
+      {% endif %}
+    </div>
+
+  </div>
+</div>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scout</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    [x-cloak] { display: none; }
+    .filter-btn.active { @apply bg-white shadow text-slate-800; }
+  </style>
+</head>
+<body class="bg-slate-800 min-h-screen font-sans">
+
+  <!-- Nav bar -->
+  <header class="bg-slate-900 border-b border-slate-700 sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-lg font-bold text-white">Scout</span>
+        <span class="text-xs text-slate-400 font-normal mt-0.5">job hunting agent</span>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <!-- Run status (polled every 5s) -->
+        <div id="run-status"
+             hx-get="/scout/status"
+             hx-trigger="load, every 5s"
+             hx-swap="outerHTML">
+          <span class="text-sm text-slate-400">Loading...</span>
+        </div>
+
+        <!-- Run Scout button -->
+        <button
+          hx-post="/scout/run"
+          hx-target="#run-status"
+          hx-swap="outerHTML"
+          hx-indicator="#run-spinner"
+          class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          Run Scout
+        </button>
+        <span id="run-spinner" class="htmx-indicator text-slate-400 text-sm">Starting...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Filter bar -->
+  <div class="bg-slate-900/80 border-b border-slate-700">
+    <div class="max-w-5xl mx-auto px-6 py-2.5 flex flex-wrap items-center gap-4">
+
+      <!-- Role type filter -->
+      <div class="flex items-center gap-1 text-sm">
+        <span class="text-slate-400 mr-1 text-xs uppercase tracking-wide font-medium">Role</span>
+        <div class="flex rounded-md bg-slate-700 p-0.5 gap-0.5" id="role-filter">
+          <button onclick="setFilter(this, 'role_type', 'all')"
+                  class="filter-btn active px-3 py-1.5 rounded text-base text-slate-800 transition-all">All</button>
+          <button onclick="setFilter(this, 'role_type', 'Manager')"
+                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">Manager</button>
+          <button onclick="setFilter(this, 'role_type', 'IC')"
+                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">IC</button>
+        </div>
+      </div>
+
+      <!-- Status filter -->
+      <div class="flex items-center gap-1 text-sm">
+        <span class="text-slate-400 mr-1 text-xs uppercase tracking-wide font-medium">Status</span>
+        <div class="flex rounded-md bg-slate-700 p-0.5 gap-0.5" id="status-filter">
+          <button onclick="setFilter(this, 'status', 'all')"
+                  class="filter-btn active px-3 py-1.5 rounded text-base text-slate-800 transition-all">All</button>
+          <button onclick="setFilter(this, 'status', 'new')"
+                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">New</button>
+          <button onclick="setFilter(this, 'status', 'saved')"
+                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">Saved</button>
+          <button onclick="setFilter(this, 'status', 'applied')"
+                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">Applied</button>
+        </div>
+      </div>
+
+      <!-- Unseen only toggle -->
+      <label class="flex items-center gap-2 text-base text-slate-500 cursor-pointer select-none">
+        <input type="checkbox" id="unseen-toggle"
+               class="rounded border-slate-300"
+               onchange="applyFilters()">
+        Unseen only
+      </label>
+
+    </div>
+  </div>
+
+  <!-- Job list -->
+  <main class="max-w-5xl mx-auto px-6 py-6">
+    <div id="job-list"
+         hx-get="/jobs"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="text-center text-slate-400 py-12 text-sm">Loading jobs...</div>
+    </div>
+  </main>
+
+  <script>
+    // Current filter state
+    const filters = { role_type: 'all', status: 'all', unseen_only: false };
+
+    function setFilter(btn, key, value) {
+      filters[key] = value;
+
+      // Update active state within the button's group
+      btn.closest('.flex').querySelectorAll('.filter-btn').forEach(b => {
+        b.classList.remove('active', 'bg-white', 'shadow', 'text-slate-800');
+        b.classList.add('text-slate-500');
+      });
+      btn.classList.add('active', 'bg-white', 'shadow', 'text-slate-800');
+      btn.classList.remove('text-slate-500');
+
+      applyFilters();
+    }
+
+    function applyFilters() {
+      filters.unseen_only = document.getElementById('unseen-toggle').checked;
+      const params = new URLSearchParams({
+        role_type: filters.role_type,
+        status: filters.status,
+        unseen_only: filters.unseen_only,
+      });
+      htmx.ajax('GET', '/jobs?' + params.toString(), { target: '#job-list', swap: 'innerHTML' });
+    }
+
+    function toggleDesc(jobId) {
+      const el = document.getElementById('desc-' + jobId);
+      const btn = document.getElementById('desc-btn-' + jobId);
+      if (el.classList.contains('hidden')) {
+        el.classList.remove('hidden');
+        btn.textContent = 'Hide full description';
+        // Mark as seen when description is opened
+        htmx.ajax('PATCH', '/jobs/' + jobId + '/seen', { swap: 'none' });
+      } else {
+        el.classList.add('hidden');
+        btn.textContent = 'Show full description';
+      }
+    }
+  </script>
+
+</body>
+</html>

@@ -52,6 +52,7 @@ def init_db():
             linkedin_url        VARCHAR,
             apply_url           VARCHAR,
             apply_platform      VARCHAR,
+            salary_range        VARCHAR,
             status              VARCHAR DEFAULT 'new',
             seen                BOOLEAN DEFAULT false,
             is_repost           BOOLEAN DEFAULT false,
