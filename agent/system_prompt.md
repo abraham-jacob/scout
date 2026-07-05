@@ -138,17 +138,11 @@ document.body.appendChild(a); a.click(); a.remove();
 'saved ' + Object.keys(window.__jobs).length + ' jobs (' + json.length + ' bytes)';
 ```
 
-The browser can only write to the Downloads folder, so move the file to `/tmp`
-(the deterministic path the runner reads) with `Bash`:
-
-```bash
-# Wait for the download, move it to /tmp, print a one-line count. Do NOT read
-# the descriptions back — the runner reads the file itself.
-run=RUN_ID
-for i in $(seq 1 20); do [ -f ~/Downloads/scout_$run.json ] && break; sleep 0.5; done
-mv ~/Downloads/scout_$run.json /tmp/scout_$run.json
-python3 -c "import json; print('jobs in file:', len(json.load(open('/tmp/scout_$run.json'))))"
-```
+The download lands in the browser's Downloads folder as `scout_<run_id>.json`,
+and that is the entire handoff — the runner polls the Downloads folder for that
+file, reads it, and cleans it up itself. **Do not** move the file, run any shell
+command, or read the descriptions back; triggering the blob download is all you
+need to do.
 
 **Fallback:**
 - If a specific job's Voyager fetch errored, retry it once; if it still fails,
@@ -160,7 +154,7 @@ python3 -c "import json; print('jobs in file:', len(json.load(open('/tmp/scout_$
 
 ### Step 3 — Stop
 
-After the file is written to `/tmp`, stop. Do not paginate to page 2.
+Once the download has been triggered, stop. Do not paginate to page 2.
 
 ---
 
@@ -169,7 +163,7 @@ After the file is written to `/tmp`, stop. Do not paginate to page 2.
 Return a single short status line — nothing else. For example:
 
 ```
-Scraped 25 jobs to /tmp/scout_<run_id>.json
+Scraped 25 jobs to Downloads/scout_<run_id>.json
 ```
 
 Do not return job data, titles, descriptions, or a list of ids — everything is
@@ -181,8 +175,7 @@ say so plainly instead.
 ## Token Efficiency Rules
 
 1. **A tight fixed sequence does the whole job** — extract job_ids (Step 1), one
-   batched Voyager fetch + a blob download + a move to /tmp (Step 2), then stop.
-   Nothing else.
+   batched Voyager fetch + a blob download (Step 2), then stop. Nothing else.
 2. **Never `read_page` and never click cards** — the Voyager API returns every
    field for all jobs, including the virtualized ones that never render.
 3. **Extract job_ids via `javascript_tool`** — query both
@@ -191,7 +184,7 @@ say so plainly instead.
 4. **Batch Voyager API calls** with `Promise.all()`, not one at a time.
 5. **Stop at page 1** — do not paginate at all.
 6. **Never return large payloads through the extension** — store results in
-   `window.__jobs`, write them to disk with a blob download, move to /tmp. Your
-   only output is a one-line status.
+   `window.__jobs` and write them to disk with a blob download. Your only output
+   is a one-line status.
 7. **Do no filtering** — scrape and save every job. Deciding which jobs to keep
    is a separate step's job, not yours.

@@ -15,6 +15,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import duckdb
 
+from app.config import load_config
 from app.database import get_connection, find_original_job
 
 # ---------------------------------------------------------------------------
@@ -27,7 +28,7 @@ TOOL_DEFINITIONS = [
         "description": (
             "Save a batch of extracted job listings to the Scout database. "
             "Call this once per page (or at the end of the run) with all jobs found. "
-            "The tool handles repost detection and Capital One filtering automatically."
+            "The tool handles repost detection and excluded-company filtering automatically."
         ),
         "input_schema": {
             "type": "object",
@@ -70,7 +71,8 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "role_type": {
                     "type": "string",
-                    "description": "Either 'manager' or 'ic'.",
+                    "description": "One of the role-type names configured in "
+                                   "profiles/config.toml (e.g. 'Manager', 'IC').",
                 },
             },
             "required": ["role_type"],
@@ -147,19 +149,22 @@ def get_existing_job_ids(role_type: str | None = None) -> list[str]:
 
 def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
     """
-    Persist a list of enriched jobs. Skips Capital One, detects reposts, and
-    persists each job's role_type and description_summary (produced by the
-    per-job enrichment step in runner.py). Returns a summary of what was saved
-    vs skipped.
+    Persist a list of enriched jobs. Skips excluded companies (config
+    [filters] exclude_companies), detects reposts, and persists each job's
+    role_type, description_summary, and tags (produced by the per-job
+    enrichment step in runner.py). Returns a summary of what was saved vs
+    skipped.
     """
-    saved, skipped_existing, skipped_capital_one, reposts = 0, 0, 0, 0
+    excluded = {c.lower() for c in load_config().exclude_companies}
+    saved, skipped_existing, skipped_excluded, reposts = 0, 0, 0, 0
     conn = get_connection()
 
     for job in jobs:
-        company = job.get("company", "")
+        # `or ""` (not a .get default): the scrape can yield company = None.
+        company = job.get("company") or ""
 
-        if company.lower().strip() == "capital one":
-            skipped_capital_one += 1
+        if company.lower().strip() in excluded:
+            skipped_excluded += 1
             continue
 
         job_id = job["job_id"]
@@ -184,9 +189,10 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
             INSERT INTO jobs (
                 job_id, scrape_run_id, title, company, location, role_type,
                 linkedin_url, apply_url, apply_platform, salary_range,
-                description_raw, description_summary, status, is_repost,
-                original_job_id, date_scraped
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)
+                description_raw, description_clean, description_summary, tags,
+                fit_score, criteria_score, dealbreakers, match_reason,
+                match_score, status, is_repost, original_job_id, date_scraped
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)
             """,
             [
                 job_id,
@@ -200,7 +206,14 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
                 job.get("apply_platform", "other"),
                 job.get("salary_range"),
                 job.get("description_raw"),
+                job.get("description_clean"),
                 job.get("description_summary"),
+                job.get("tags") or [],
+                job.get("fit_score"),
+                job.get("criteria_score"),
+                job.get("dealbreakers") or [],
+                job.get("match_reason"),
+                job.get("match_score"),
                 is_repost,
                 original_id,
                 datetime.now(timezone.utc).isoformat(),
@@ -222,7 +235,7 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
         "saved": saved,
         "reposts_detected": reposts,
         "skipped_already_exists": skipped_existing,
-        "skipped_capital_one": skipped_capital_one,
+        "skipped_excluded_company": skipped_excluded,
     }
 
 
