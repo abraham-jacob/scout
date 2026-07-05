@@ -32,7 +32,7 @@ def main():
     print(f"Saved    : {result['saved']} jobs")
     print(f"Reposts  : {result['reposts_detected']}")
     print(f"Skipped  : {result['skipped_already_exists']} already existed")
-    print(f"Filtered : {result['skipped_capital_one']} Capital One")
+    print(f"Filtered : {result['skipped_excluded_company']} excluded companies")
 
 
 if __name__ == "__main__":

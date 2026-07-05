@@ -1,111 +1,156 @@
+{# Status hue maps. Each entry carries light classes plus dark: overrides so the
+   card renders correctly in both themes. 'new' uses the theme accent
+   (orange→rose light / indigo→violet dark); every other status keeps one hue. #}
+
 {% set status_accent = {
-  'new':                    'border-l-fuchsia-400',
-  'saved':                  'border-l-amber-400',
-  'applied':                'border-l-emerald-400',
-  'interviewing_recruiter': 'border-l-purple-400',
-  'interviewing_technical': 'border-l-indigo-400',
-  'offer':                  'border-l-lime-400',
-  'rejected':               'border-l-rose-400',
-  'dismissed':              'border-l-slate-500',
+  'new':                    'bg-gradient-to-b from-orange-400 to-rose-500 dark:from-indigo-400 dark:to-violet-500',
+  'saved':                  'bg-amber-400',
+  'applied':                'bg-emerald-400 dark:bg-emerald-500',
+  'interviewing_recruiter': 'bg-purple-400',
+  'interviewing_technical': 'bg-sky-400',
+  'offer':                  'bg-lime-400',
+  'rejected':               'bg-red-400',
+  'dismissed':              'bg-stone-300 dark:bg-slate-600',
 } %}
 
 {% set status_badge = {
-  'new':                    'bg-fuchsia-500/20 text-fuchsia-300 ring-fuchsia-400/30',
-  'saved':                  'bg-amber-500/20 text-amber-300 ring-amber-400/30',
-  'applied':                'bg-emerald-500/20 text-emerald-300 ring-emerald-400/30',
-  'interviewing_recruiter': 'bg-purple-500/20 text-purple-300 ring-purple-400/30',
-  'interviewing_technical': 'bg-indigo-500/20 text-indigo-300 ring-indigo-400/30',
-  'offer':                  'bg-lime-500/20 text-lime-300 ring-lime-400/30',
-  'rejected':               'bg-rose-500/20 text-rose-300 ring-rose-400/30',
-  'dismissed':              'bg-slate-500/20 text-slate-400 ring-slate-500/30',
+  'new':                    'bg-rose-50 text-rose-600 ring-rose-200 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-400/30',
+  'saved':                  'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30',
+  'applied':                'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30',
+  'interviewing_recruiter': 'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/15 dark:text-purple-300 dark:ring-purple-400/30',
+  'interviewing_technical': 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-400/30',
+  'offer':                  'bg-lime-50 text-lime-700 ring-lime-200 dark:bg-lime-400/15 dark:text-lime-300 dark:ring-lime-400/30',
+  'rejected':               'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-400/30',
+  'dismissed':              'bg-stone-100 text-stone-500 ring-stone-200 dark:bg-slate-500/15 dark:text-slate-400 dark:ring-slate-500/30',
 } %}
 
-{% set platform_colors = {
-  'easy_apply': 'bg-blue-600 text-white',
-  'greenhouse': 'bg-green-600 text-white',
-  'ashby':      'bg-orange-500 text-white',
-  'workday':    'bg-sky-600 text-white',
-  'other':      'bg-slate-600 text-slate-200',
+{% set status_dot = {
+  'new':                    'bg-rose-500 dark:bg-indigo-400',
+  'saved':                  'bg-amber-500 dark:bg-amber-400',
+  'applied':                'bg-emerald-500 dark:bg-emerald-400',
+  'interviewing_recruiter': 'bg-purple-500 dark:bg-purple-400',
+  'interviewing_technical': 'bg-sky-500 dark:bg-sky-400',
+  'offer':                  'bg-lime-500 dark:bg-lime-400',
+  'rejected':               'bg-red-500 dark:bg-red-400',
+  'dismissed':              'bg-stone-400 dark:bg-slate-500',
 } %}
 
 {% set platform_labels = {
   'easy_apply': 'Easy Apply',
-  'greenhouse': 'Greenhouse',
-  'ashby':      'Ashby',
-  'workday':    'Workday',
-  'other':      'Apply',
+  'greenhouse': 'Apply on Greenhouse',
+  'ashby':      'Apply on Ashby',
+  'workday':    'Apply on Workday',
 } %}
 
-{% set role_colors = {
-  'Manager': 'bg-violet-600 text-white',
-  'IC':      'bg-teal-600 text-white',
-} %}
+{# role_colors (name -> chip classes) is supplied by the route from
+   app.config.role_color_map, so configured role types color consistently. #}
 
 <div id="job-{{ job.job_id }}"
-     class="bg-slate-700 border border-slate-600 border-l-[14px] {{ status_accent.get(job.status, 'border-l-slate-500') }} rounded-xl p-5 hover:bg-slate-650 hover:shadow-lg transition-all">
+     class="jobcard bg-white dark:bg-card border border-stone-200 dark:border-edge rounded-2xl dark:rounded-xl p-5 relative overflow-hidden transition-all">
 
-  <!-- Top row: title + badges -->
+  <!-- Status accent bar -->
+  <div class="absolute left-0 top-0 bottom-0 w-1.5 dark:w-1 {{ status_accent.get(job.status, 'bg-stone-300 dark:bg-slate-600') }}"></div>
+
+  {% if job.match_score is not none %}
+    {% if job.dealbreakers %}
+      {% set match_cls = 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30' %}
+    {% elif job.match_score >= 80 %}
+      {% set match_cls = 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:ring-emerald-400/30' %}
+    {% elif job.match_score >= 60 %}
+      {% set match_cls = 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30' %}
+    {% else %}
+      {% set match_cls = 'bg-stone-100 text-stone-500 ring-stone-200 dark:bg-white/5 dark:text-slate-400 dark:ring-white/10' %}
+    {% endif %}
+  {% endif %}
+
+  <!-- Top row: title + match pill + company / status badge -->
   <div class="flex items-start justify-between gap-4">
     <div class="min-w-0">
-      <h3 class="font-semibold text-white text-lg leading-snug truncate">{{ job.title }}</h3>
-      <p class="text-base text-slate-200 mt-0.5">
-        <span class="text-lime-400 font-semibold">{{ job.company }}</span>
-        {% if job.location %} &middot; {{ job.location }}{% endif %}
+      <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <h3 class="font-bold text-slate-900 dark:text-white text-lg leading-snug tracking-tight">{{ job.title }}</h3>
+        {% if job.match_score is not none %}
+        <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-sm leading-snug font-extrabold dark:font-bold ring-1 ring-inset {{ match_cls }}"
+              title="{{ job.match_reason or '' }}{% if job.dealbreakers %} — ⚠ Dealbreakers: {{ job.dealbreakers | join(', ') }}{% endif %}">
+          {% if job.dealbreakers %}⚠{% endif %} {{ job.match_score | round | int }}% match
+        </span>
+        {% endif %}
+      </div>
+      <p class="text-[15px] mt-1">
+        <span class="text-rose-600 dark:text-indigo-300 font-bold dark:font-semibold">{{ job.company }}</span>
+        {% if job.location %}<span class="text-slate-400 dark:text-slate-500 font-medium dark:font-normal"> · {{ job.location }}</span>{% endif %}
       </p>
     </div>
 
     <div class="flex flex-col items-end gap-1.5 shrink-0">
-      <span class="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-medium ring-1 ring-inset {{ status_badge.get(job.status, 'bg-slate-500/20 text-slate-300 ring-slate-400/30') }}">
+      <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold dark:font-semibold ring-1 ring-inset {{ status_badge.get(job.status, status_badge['dismissed']) }}">
+        <span class="w-1.5 h-1.5 rounded-full {{ status_dot.get(job.status, status_dot['dismissed']) }}"></span>
         {{ job.status | replace('_', ' ') }}
-      </span>
-      <span class="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium {{ platform_colors.get(job.apply_platform, 'bg-slate-600 text-slate-200') }}">
-        {{ platform_labels.get(job.apply_platform, job.apply_platform) }}
       </span>
     </div>
   </div>
 
-  <!-- role + repost + salary -->
-  <div class="flex items-center gap-3 mt-2">
+  <!-- Tag row: role + workplace/salary/repost -->
+  <div class="flex flex-wrap items-center gap-1.5 mt-3">
     {% if job.role_type %}
-    <span class="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium {{ role_colors.get(job.role_type, 'bg-slate-600 text-slate-200') }}">
+    <span class="rounded-lg dark:rounded-md px-2 py-0.5 text-xs font-bold dark:font-semibold {{ role_colors.get(job.role_type, 'bg-stone-100 text-stone-600 dark:bg-white/5 dark:text-slate-400') }}">
       {{ job.role_type }}
     </span>
     {% endif %}
-    {% if job.is_repost %}
-    <span class="text-sm text-amber-400 font-medium">Repost</span>
-    {% endif %}
     {% if job.salary_range %}
-    <span class="text-base font-medium text-emerald-400">{{ job.salary_range }}</span>
+    <span class="rounded-lg dark:rounded-md px-2 py-0.5 text-xs font-bold dark:font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-1 dark:ring-inset dark:ring-emerald-400/30">
+      {{ job.salary_range }}
+    </span>
     {% endif %}
+    {% if job.is_repost %}
+    <span class="rounded-lg dark:rounded-md px-2 py-0.5 text-xs font-bold dark:font-semibold bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-1 dark:ring-inset dark:ring-rose-400/30"
+          title="Previously posted — this listing is a repost{% if job.original_job_id %} of job {{ job.original_job_id }}{% endif %}">
+      ↻ Repost
+    </span>
+    {% endif %}
+    {# Enrichment tags: workplace tags get color, the rest render neutral #}
+    {% for tag in job.tags or [] %}
+      {% if tag.startswith('Remote') %}
+        {% set tag_cls = 'font-bold dark:font-semibold bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-1 dark:ring-inset dark:ring-sky-400/30' %}
+      {% elif tag.startswith('Hybrid') %}
+        {% set tag_cls = 'font-bold dark:font-semibold bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-1 dark:ring-inset dark:ring-amber-400/30' %}
+      {% elif tag.startswith('On-site') %}
+        {% set tag_cls = 'font-bold dark:font-semibold bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-1 dark:ring-inset dark:ring-orange-400/30' %}
+      {% else %}
+        {% set tag_cls = 'font-semibold bg-slate-200 text-slate-900 dark:bg-slate-500/50 dark:text-white dark:ring-1 dark:ring-inset dark:ring-slate-300/40' %}
+      {% endif %}
+      <span class="rounded-lg dark:rounded-md px-2 py-0.5 text-xs {{ tag_cls }}">{{ tag }}</span>
+    {% endfor %}
   </div>
 
   <!-- Summary (always visible) -->
   {% if job.description_summary %}
-  <p class="mt-3 text-sm text-slate-200 leading-relaxed">{{ job.description_summary }}</p>
+  <p class="mt-3 text-sm text-slate-600 dark:text-slate-300/90 leading-relaxed">{{ job.description_summary }}</p>
   {% endif %}
 
-  <!-- Full description toggle -->
-  <div class="mt-3">
+  <!-- Full description disclosure -->
+  <div class="mt-4 pt-3 border-t border-stone-100 dark:border-edge/50">
     <button id="desc-btn-{{ job.job_id }}"
-            onclick="toggleDesc('{{ job.job_id }}')"
-            class="text-sm text-slate-300 hover:text-white font-medium transition-colors">
-      Show full description
+            onclick="toggleDesc(this, '{{ job.job_id }}')"
+            class="inline-flex items-center gap-1.5 text-sm font-bold dark:font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors">
+      <svg class="chev w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+      Full description
     </button>
-    <div id="desc-{{ job.job_id }}"
-         class="hidden mt-3 text-sm text-slate-300 leading-relaxed whitespace-pre-line max-h-72 overflow-y-auto bg-slate-800/60 rounded-lg p-3 border border-slate-600">
-      {{ job.description_raw }}
-    </div>
+  </div>
+  <div id="desc-{{ job.job_id }}"
+       class="hidden mt-2 text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-line max-h-72 overflow-y-auto bg-stone-50 dark:bg-ink/70 rounded-xl dark:rounded-lg p-4 border border-stone-200 dark:border-edge">
+    {{ job.description_raw }}
   </div>
 
   <!-- Actions row -->
-  <div class="mt-4 pt-3 border-t border-slate-600 flex items-center justify-between gap-3">
+  <div class="mt-4 pt-3.5 border-t border-stone-100 dark:border-edge/70 flex items-center justify-between gap-3">
 
     <form hx-patch="/jobs/{{ job.job_id }}/status"
           hx-target="#job-{{ job.job_id }}"
-          hx-swap="outerHTML">
+          hx-swap="outerHTML"
+          hx-vals='js:{show_dismissed: document.getElementById("dismissed-toggle")?.checked ?? false}'>
       <select name="status"
               onchange="this.form.requestSubmit()"
-              class="text-sm border border-slate-500 rounded-md px-2 py-1.5 text-slate-200 bg-slate-600 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 cursor-pointer">
+              class="text-sm font-semibold dark:font-normal bg-white dark:bg-ink border border-stone-300 dark:border-edge rounded-xl dark:rounded-lg px-2.5 py-1.5 text-slate-700 dark:text-slate-300 hover:border-stone-400 dark:hover:border-edgehi focus:outline-none focus:ring-2 focus:ring-orange-400/40 dark:focus:ring-indigo-500/50 cursor-pointer">
         {% for s in statuses %}
         <option value="{{ s }}" {% if s == job.status %}selected{% endif %}>
           {{ s | replace('_', ' ') | title }}
@@ -114,28 +159,28 @@
       </select>
     </form>
 
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2">
+      {% if job.date_scraped %}
+      <span class="text-xs font-semibold dark:font-normal text-slate-400 dark:text-slate-600 mr-1">
+        {{ job.date_scraped.strftime('%Y-%m-%d') if job.date_scraped.strftime is defined else job.date_scraped }}
+      </span>
+      {% endif %}
       {% set apply_href = job.apply_url if job.apply_url else job.linkedin_url %}
       {% if job.apply_platform == 'easy_apply' %}
       <a href="{{ apply_href }}" target="_blank"
-         class="text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors">
+         class="text-sm font-bold dark:font-semibold text-white bg-blue-600 hover:bg-blue-500 px-3.5 py-1.5 rounded-xl dark:rounded-lg transition-colors dark:shadow dark:shadow-blue-500/20">
         Easy Apply ↗
       </a>
       {% else %}
       <a href="{{ apply_href }}" target="_blank"
-         class="text-sm font-medium text-fuchsia-400 hover:text-fuchsia-300 transition-colors">
-        Apply ↗
+         class="text-sm font-bold dark:font-semibold text-white bg-slate-900 hover:bg-slate-700 dark:bg-indigo-500 dark:hover:bg-indigo-400 px-3.5 py-1.5 rounded-xl dark:rounded-lg transition-colors dark:shadow dark:shadow-indigo-500/20">
+        {{ platform_labels.get(job.apply_platform, 'Apply on company site') }} ↗
       </a>
       {% endif %}
       <a href="{{ job.linkedin_url }}" target="_blank"
-         class="text-sm text-slate-300 hover:text-white transition-colors">
+         class="text-sm font-bold dark:font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white px-2.5 py-1.5 rounded-xl dark:rounded-lg border border-stone-300 dark:border-edge hover:border-stone-400 dark:hover:border-edgehi transition-colors">
         LinkedIn ↗
       </a>
-      {% if job.date_scraped %}
-      <span class="text-sm text-slate-300">
-        {{ job.date_scraped.strftime('%Y-%m-%d') if job.date_scraped.strftime is defined else job.date_scraped }}
-      </span>
-      {% endif %}
     </div>
 
   </div>

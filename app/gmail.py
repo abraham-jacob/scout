@@ -1,17 +1,20 @@
 import os
 import base64
 import re
+from datetime import datetime
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
+from app.config import load_config
+
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 BASE_DIR = Path(__file__).parent.parent
 CREDENTIALS_FILE = BASE_DIR / "credentials.json"
 TOKEN_FILE = BASE_DIR / "token.json"
-LABEL_NAME = "Daily LinkedIn Search"
+DATE_FORMAT = "%a, %d %b %Y %H:%M:%S %z"
 
 
 def get_gmail_service():
@@ -51,12 +54,16 @@ def extract_see_all_jobs_url(body: str) -> str | None:
     return match.group(1) if match else None
 
 
-def get_job_alert_emails(max_results: int = 5) -> list[dict]:
-    """Fetch unread LinkedIn job alert emails and return their metadata and job URLs."""
+def get_job_alert_emails(max_results: int = 50) -> list[dict]:
+    """Fetch unread LinkedIn job alert emails and return their metadata and job URLs.
+
+    The label to pull from comes from profiles/config.toml ([gmail] label).
+    """
+    label_name = load_config().gmail_label
     service = get_gmail_service()
-    label_id = get_label_id(service, LABEL_NAME)
+    label_id = get_label_id(service, label_name)
     if not label_id:
-        raise ValueError(f"Gmail label '{LABEL_NAME}' not found")
+        raise ValueError(f"Gmail label '{label_name}' not found")
 
     messages = service.users().messages().list(
         userId="me", labelIds=[label_id, "UNREAD"], maxResults=max_results
@@ -80,9 +87,6 @@ def get_job_alert_emails(max_results: int = 5) -> list[dict]:
         body = _extract_body(full["payload"])
         url = extract_see_all_jobs_url(body)
 
-        if url:
-            mark_as_read(service, msg["id"])
-
         results.append({
             "message_id": msg["id"],
             "subject": subject,
@@ -90,7 +94,11 @@ def get_job_alert_emails(max_results: int = 5) -> list[dict]:
             "see_all_jobs_url": url,
         })
 
-    return results
+    if not results:
+        return []
+
+    results.sort(key=lambda x: datetime.strptime(x["date"].split(" (")[0], DATE_FORMAT))
+    return results[:1]
 
 
 def mark_as_read(service, message_id: str):
@@ -100,6 +108,15 @@ def mark_as_read(service, message_id: str):
         id=message_id,
         body={"removeLabelIds": ["UNREAD"]}
     ).execute()
+
+
+def mark_email_read(message_id: str) -> None:
+    """Mark a single message read, building its own Gmail service.
+
+    Called by the runner after an email's jobs are written to the database, so an
+    email is only cleared from the unread queue once we're done processing it.
+    """
+    mark_as_read(get_gmail_service(), message_id)
 
 
 def _extract_body(payload: dict) -> str:

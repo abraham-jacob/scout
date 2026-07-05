@@ -4,138 +4,397 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scout</title>
+
+  <!-- Apply saved theme before first paint to avoid a flash of the wrong theme -->
+  <script>
+    if (localStorage.getItem('scout-theme') === 'dark'
+        || (!localStorage.getItem('scout-theme')
+            && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark');
+    }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            /* dark theme surfaces */
+            ink:    '#0B0F1D',
+            card:   '#141A2E',
+            edge:   '#232C4B',
+            edgehi: '#3B4674',
+            /* light theme surface */
+            paper:  '#FAF9F6',
+          },
+        },
+      },
+    }
+  </script>
   <style>
-    [x-cloak] { display: none; }
-    .filter-btn.active { @apply bg-white shadow text-slate-800; }
+    /* Light theme: Plus Jakarta Sans. Dark theme: Inter. */
+    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+    html.dark body { font-family: 'Inter', system-ui, sans-serif; font-feature-settings: 'cv02','cv03','cv04','cv11'; }
+
+    /* Card hover: cards are flat by default; light gets a shadow lift, dark a border glow */
+    .jobcard:hover { box-shadow: 0 2px 4px rgba(16,24,40,.06), 0 12px 32px rgba(16,24,40,.12); }
+    html.dark .jobcard:hover { border-color: #3B4674; box-shadow: 0 0 0 1px rgba(99,102,241,.25), 0 8px 30px rgba(0,0,0,.35); }
+
+    /* Chevron rotation for the "Full description" disclosure */
+    .chev { transition: transform .2s; }
+    .open .chev { transform: rotate(90deg); }
   </style>
 </head>
-<body class="bg-slate-800 min-h-screen font-sans">
+<body class="bg-paper dark:bg-ink min-h-screen text-slate-700 dark:text-slate-300 antialiased transition-colors">
 
-  <!-- Nav bar -->
-  <header class="bg-slate-900 border-b border-slate-700 sticky top-0 z-10">
-    <div class="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-lg font-bold text-white">Scout</span>
-        <span class="text-xs text-slate-400 font-normal mt-0.5">job hunting agent</span>
+  <!-- ================= Header ================= -->
+  <header class="sticky top-0 z-10 bg-white/85 dark:bg-ink/80 backdrop-blur border-b border-stone-200 dark:border-edge">
+    <div class="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-400 to-rose-500 dark:from-indigo-500 dark:to-violet-600 flex items-center justify-center shadow-md shadow-orange-500/25 dark:shadow-indigo-500/30">
+          <svg class="w-5 h-5 text-white" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
+          </svg>
+        </div>
+        <div class="leading-tight">
+          <div class="text-slate-900 dark:text-white font-extrabold dark:font-bold text-xl dark:text-lg tracking-tight">Scout</div>
+          <div class="text-[11px] text-slate-400 dark:text-slate-500 font-semibold dark:font-medium -mt-0.5 uppercase dark:normal-case tracking-wide dark:tracking-normal">job hunting agent</div>
+        </div>
       </div>
 
       <div class="flex items-center gap-4">
-        <!-- Run status (polled every 5s) -->
-        <div id="run-status"
-             hx-get="/scout/status"
-             hx-trigger="load, every 5s"
-             hx-swap="outerHTML">
-          <span class="text-sm text-slate-400">Loading...</span>
-        </div>
+        <!-- Compact run status (updated out-of-band by the drawer poll; click to reopen) -->
+        <span id="nav-status"
+              onclick="openDrawer()"
+              class="cursor-pointer text-sm text-slate-400 dark:text-slate-500 inline-flex items-center gap-1.5 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+          Idle
+        </span>
+
+        <!-- Theme toggle -->
+        <button onclick="toggleTheme()"
+                aria-label="Toggle theme"
+                class="w-9 h-9 rounded-xl border border-stone-200 dark:border-edge text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:border-stone-300 dark:hover:border-edgehi flex items-center justify-center transition-colors">
+          <!-- sun: shown in dark mode (click to go light) -->
+          <svg class="hidden dark:block w-4.5 h-4.5" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+          <!-- moon: shown in light mode (click to go dark) -->
+          <svg class="dark:hidden w-4.5 h-4.5" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+          </svg>
+        </button>
+
+        <!-- Log model calls toggle: forwarded to the runner's --log-model-calls -->
+        <label class="flex items-center gap-1.5 text-xs font-semibold dark:font-normal text-slate-400 dark:text-slate-500 cursor-pointer select-none hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+               title="Log every Claude call (model, system prompt, user message) to model_calls.log for this run">
+          <input type="checkbox" id="model-log-toggle"
+                 class="w-3.5 h-3.5 rounded border-stone-300 dark:border-edge dark:bg-card text-orange-500 dark:text-indigo-500 focus:ring-orange-400/40 dark:focus:ring-indigo-500/40 focus:ring-offset-0">
+          Log LLM calls
+        </label>
 
         <!-- Run Scout button -->
         <button
           hx-post="/scout/run"
           hx-target="#run-status"
           hx-swap="outerHTML"
-          hx-indicator="#run-spinner"
-          class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-          Run Scout
+          hx-vals='js:{log_model_calls: document.getElementById("model-log-toggle")?.checked ?? false}'
+          onclick="openDrawer()"
+          class="bg-gradient-to-r from-orange-500 to-rose-500 hover:from-orange-400 hover:to-rose-400 dark:from-indigo-500 dark:to-violet-600 dark:hover:from-indigo-400 dark:hover:to-violet-500 text-white text-sm font-bold dark:font-semibold px-4 py-2 rounded-xl dark:rounded-lg shadow-md shadow-orange-500/25 dark:shadow-lg dark:shadow-indigo-500/25 transition-all hover:shadow-lg hover:shadow-orange-500/30 dark:hover:shadow-indigo-500/40">
+          ▶ Run Scout
         </button>
-        <span id="run-spinner" class="htmx-indicator text-slate-400 text-sm">Starting...</span>
       </div>
     </div>
   </header>
 
-  <!-- Filter bar -->
-  <div class="bg-slate-900/80 border-b border-slate-700">
-    <div class="max-w-5xl mx-auto px-6 py-2.5 flex flex-wrap items-center gap-4">
+  <!-- ================= Filter bar ================= -->
+  <div class="bg-white/60 dark:bg-ink/60 border-b border-stone-200 dark:border-edge/60">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex flex-wrap items-center gap-5">
 
       <!-- Role type filter -->
-      <div class="flex items-center gap-1 text-sm">
-        <span class="text-slate-400 mr-1 text-xs uppercase tracking-wide font-medium">Role</span>
-        <div class="flex rounded-md bg-slate-700 p-0.5 gap-0.5" id="role-filter">
-          <button onclick="setFilter(this, 'role_type', 'all')"
-                  class="filter-btn active px-3 py-1.5 rounded text-base text-slate-800 transition-all">All</button>
-          <button onclick="setFilter(this, 'role_type', 'Manager')"
-                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">Manager</button>
-          <button onclick="setFilter(this, 'role_type', 'IC')"
-                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">IC</button>
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] uppercase tracking-wider font-bold dark:font-semibold text-slate-400 dark:text-slate-500">Role</span>
+        <div class="flex rounded-xl dark:rounded-lg bg-stone-100 dark:bg-card border border-stone-200 dark:border-edge p-0.5 gap-0.5" id="role-filter">
+          <button onclick="setFilter(this, 'role_type', 'all')" class="filter-btn active px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">All</button>
+          {% for name in role_names %}
+          <button onclick="setFilter(this, 'role_type', '{{ name }}')" class="filter-btn px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">{{ name }}</button>
+          {% endfor %}
         </div>
       </div>
 
       <!-- Status filter -->
-      <div class="flex items-center gap-1 text-sm">
-        <span class="text-slate-400 mr-1 text-xs uppercase tracking-wide font-medium">Status</span>
-        <div class="flex rounded-md bg-slate-700 p-0.5 gap-0.5" id="status-filter">
-          <button onclick="setFilter(this, 'status', 'all')"
-                  class="filter-btn active px-3 py-1.5 rounded text-base text-slate-800 transition-all">All</button>
-          <button onclick="setFilter(this, 'status', 'new')"
-                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">New</button>
-          <button onclick="setFilter(this, 'status', 'saved')"
-                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">Saved</button>
-          <button onclick="setFilter(this, 'status', 'applied')"
-                  class="filter-btn px-3 py-1.5 rounded text-base text-slate-400 hover:text-white transition-all">Applied</button>
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] uppercase tracking-wider font-bold dark:font-semibold text-slate-400 dark:text-slate-500">Status</span>
+        <div class="flex rounded-xl dark:rounded-lg bg-stone-100 dark:bg-card border border-stone-200 dark:border-edge p-0.5 gap-0.5" id="status-filter">
+          <button onclick="setFilter(this, 'status', 'all')" class="filter-btn active px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">All</button>
+          <button onclick="setFilter(this, 'status', 'new')" class="filter-btn px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">New</button>
+          <button onclick="setFilter(this, 'status', 'saved')" class="filter-btn px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">Saved</button>
+
+          <!-- Applied dropdown: the button only opens the stage menu; selection happens in the menu -->
+          <div class="relative flex">
+            <button id="applied-btn" onclick="toggleStageMenu(event)"
+                    class="filter-btn px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">Applied ▾</button>
+            <div id="stage-menu"
+                 class="hidden absolute top-full right-0 mt-1.5 w-44 bg-white dark:bg-card border border-stone-200 dark:border-edge rounded-xl dark:rounded-lg shadow-lg dark:shadow-black/40 py-1 z-20">
+              <button data-stage="all" onclick="setAppliedStage('all')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">All</button>
+              <button data-stage="applied" onclick="setAppliedStage('applied')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Applied only</button>
+              <button data-stage="interviewing_recruiter" onclick="setAppliedStage('interviewing_recruiter')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Recruiter</button>
+              <button data-stage="interviewing_technical" onclick="setAppliedStage('interviewing_technical')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Technical</button>
+              <button data-stage="offer" onclick="setAppliedStage('offer')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Offer</button>
+              <button data-stage="rejected" onclick="setAppliedStage('rejected')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Rejected</button>
+            </div>
+          </div>
         </div>
       </div>
 
+      <!-- Sort order -->
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] uppercase tracking-wider font-bold dark:font-semibold text-slate-400 dark:text-slate-500">Sort</span>
+        <div class="flex rounded-xl dark:rounded-lg bg-stone-100 dark:bg-card border border-stone-200 dark:border-edge p-0.5 gap-0.5" id="sort-filter">
+          <button onclick="setFilter(this, 'sort', 'newest')" class="filter-btn active px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">Newest</button>
+          <button onclick="setFilter(this, 'sort', 'match')" class="filter-btn px-3 py-1 rounded-lg dark:rounded-md text-sm transition-colors">Best match</button>
+        </div>
+      </div>
+
+      <!-- Company search with autocomplete -->
+      <div class="relative">
+        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500 pointer-events-none"
+             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
+        </svg>
+        <input id="company-search" type="text" placeholder="Company…" autocomplete="off"
+               oninput="onCompanyInput()" onfocus="renderSuggestions()" onblur="hideSuggestions()"
+               class="w-44 pl-8 pr-8 py-1.5 text-sm font-semibold dark:font-normal bg-white dark:bg-card border border-stone-200 dark:border-edge rounded-xl dark:rounded-lg text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-400/40 dark:focus:ring-indigo-500/50 focus:border-orange-300 dark:focus:border-edgehi transition-colors">
+        <button id="clear-search" onmousedown="event.preventDefault(); clearCompanySearch()" tabindex="-1"
+                aria-label="Clear company search"
+                class="invisible absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-stone-300 hover:bg-stone-400 dark:bg-slate-600 dark:hover:bg-slate-500 text-white transition-colors"
+                style="width:18px;height:18px;line-height:16px;font-size:12px">×</button>
+        <div id="company-suggestions"
+             class="hidden absolute top-full left-0 mt-1.5 w-56 bg-white dark:bg-card border border-stone-200 dark:border-edge rounded-xl dark:rounded-lg shadow-lg dark:shadow-black/40 py-1 z-20"></div>
+      </div>
+
       <!-- Unseen only toggle -->
-      <label class="flex items-center gap-2 text-base text-slate-500 cursor-pointer select-none">
+      <label class="flex items-center gap-2 text-sm font-semibold dark:font-normal text-slate-500 dark:text-slate-400 cursor-pointer select-none hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
         <input type="checkbox" id="unseen-toggle"
-               class="rounded border-slate-300"
+               class="w-4 h-4 rounded border-stone-300 dark:border-edge dark:bg-card text-orange-500 dark:text-indigo-500 focus:ring-orange-400/40 dark:focus:ring-indigo-500/40 focus:ring-offset-0"
                onchange="applyFilters()">
         Unseen only
+      </label>
+
+      <!-- Show dismissed toggle -->
+      <label class="flex items-center gap-2 text-sm font-semibold dark:font-normal text-slate-500 dark:text-slate-400 cursor-pointer select-none hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
+        <input type="checkbox" id="dismissed-toggle"
+               class="w-4 h-4 rounded border-stone-300 dark:border-edge dark:bg-card text-orange-500 dark:text-indigo-500 focus:ring-orange-400/40 dark:focus:ring-indigo-500/40 focus:ring-offset-0"
+               onchange="applyFilters()">
+        Show dismissed
       </label>
 
     </div>
   </div>
 
-  <!-- Job list -->
-  <main class="max-w-5xl mx-auto px-6 py-6">
+  <!-- ================= Job list ================= -->
+  <main class="max-w-6xl mx-auto px-6 py-6">
     <div id="job-list"
          hx-get="/jobs"
          hx-trigger="load"
          hx-swap="innerHTML">
-      <div class="text-center text-slate-400 py-12 text-sm">Loading jobs...</div>
+      <div class="text-center text-slate-400 dark:text-slate-500 py-12 text-sm">Loading jobs...</div>
     </div>
   </main>
 
+  <!-- ================= Run drawer (slide-over) ================= -->
+  <aside id="run-drawer"
+         class="fixed top-0 right-0 h-full w-96 max-w-[90vw] bg-white dark:bg-[#0E1426] border-l border-stone-200 dark:border-edge shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-30 overflow-y-auto">
+    <div id="run-status"
+         hx-get="/scout/status"
+         hx-trigger="load"
+         hx-swap="outerHTML">
+    </div>
+  </aside>
+
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script>
+    // --- Theme toggle ---
+    function toggleTheme() {
+      const dark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('scout-theme', dark ? 'dark' : 'light');
+    }
+
+    // --- Run drawer open/close ---
+    // drawerAutoOpened guards against 1s polls re-opening a drawer the user closed.
+    let drawerAutoOpened = false;
+    function openDrawer() {
+      document.getElementById('run-drawer').classList.remove('translate-x-full');
+      drawerAutoOpened = true;
+    }
+    function closeDrawer() {
+      document.getElementById('run-drawer').classList.add('translate-x-full');
+    }
+    // Auto-open once on page load if a run is already in progress; refresh the
+    // search autocomplete's company list when a run finishes (new companies).
+    let runWasActive = false;
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      if (!e.target || e.target.id !== 'run-status') return;
+      const running = e.target.dataset.running === 'true';
+      if (running && !drawerAutoOpened) openDrawer();
+      if (runWasActive && !running) loadCompanies();
+      runWasActive = running;
+    });
+
+    // --- Filters ---
+    // Active/inactive class sets cover both themes; dark: variants win when html.dark is set.
+    const FILTER_ACTIVE = ['bg-white', 'text-slate-900', 'shadow-sm', 'font-bold',
+                           'dark:bg-indigo-500/20', 'dark:text-indigo-300',
+                           'dark:ring-1', 'dark:ring-inset', 'dark:ring-indigo-400/40', 'dark:font-medium'];
+    const FILTER_INACTIVE = ['text-slate-500', 'font-semibold', 'hover:text-slate-800',
+                             'dark:text-slate-400', 'dark:hover:text-white', 'dark:font-medium'];
+
+    function styleFilterBtn(btn, active) {
+      btn.classList.remove(...FILTER_ACTIVE, ...FILTER_INACTIVE);
+      btn.classList.add(...(active ? FILTER_ACTIVE : FILTER_INACTIVE));
+      btn.classList.toggle('active', active);
+    }
+    // Apply initial styling to the server-rendered buttons.
+    document.querySelectorAll('.filter-btn').forEach(b => styleFilterBtn(b, b.classList.contains('active')));
+
     // Current filter state
-    const filters = { role_type: 'all', status: 'all', unseen_only: false };
+    const filters = { role_type: 'all', status: 'all', unseen_only: false, sort: 'newest', show_dismissed: false, company: '' };
 
     function setFilter(btn, key, value) {
       filters[key] = value;
-
-      // Update active state within the button's group
-      btn.closest('.flex').querySelectorAll('.filter-btn').forEach(b => {
-        b.classList.remove('active', 'bg-white', 'shadow', 'text-slate-800');
-        b.classList.add('text-slate-500');
-      });
-      btn.classList.add('active', 'bg-white', 'shadow', 'text-slate-800');
-      btn.classList.remove('text-slate-500');
-
+      btn.closest('.flex').querySelectorAll('.filter-btn').forEach(b => styleFilterBtn(b, b === btn));
+      if (key === 'status') resetAppliedButton();
       applyFilters();
+    }
+
+    // --- Applied stage dropdown ---
+    // 'pipeline' asks the server for applied + every post-application stage.
+    const STAGE_LABELS = {
+      all: 'Applied · All',
+      applied: 'Applied · Only',
+      interviewing_recruiter: 'Applied · Recruiter',
+      interviewing_technical: 'Applied · Technical',
+      offer: 'Applied · Offer',
+      rejected: 'Applied · Rejected',
+    };
+
+    function toggleStageMenu(e) {
+      e.stopPropagation();
+      document.getElementById('stage-menu').classList.toggle('hidden');
+    }
+    document.addEventListener('click', () => document.getElementById('stage-menu').classList.add('hidden'));
+
+    function setAppliedStage(stage) {
+      filters.status = stage === 'all' ? 'pipeline' : stage;
+      const btn = document.getElementById('applied-btn');
+      btn.textContent = STAGE_LABELS[stage] + ' ▾';
+      document.querySelectorAll('#status-filter .filter-btn').forEach(b => styleFilterBtn(b, b === btn));
+      document.querySelectorAll('.stage-item').forEach(b =>
+        b.classList.toggle('font-bold', b.dataset.stage === stage));
+      document.getElementById('stage-menu').classList.add('hidden');
+      applyFilters();
+    }
+
+    function resetAppliedButton() {
+      document.getElementById('applied-btn').textContent = 'Applied ▾';
+      document.querySelectorAll('.stage-item').forEach(b => b.classList.remove('font-bold'));
+    }
+
+    // --- Company search with autocomplete ---
+    // Suggestions match against a company list fetched once (and refreshed when
+    // a run completes); the card list only round-trips to /jobs after a
+    // debounce pause, and only for 3+ typed characters or a suggestion pick.
+    let companyList = [];
+    let companyDebounce = null;
+    const searchInput = document.getElementById('company-search');
+    const suggestBox = document.getElementById('company-suggestions');
+
+    async function loadCompanies() {
+      try {
+        companyList = await (await fetch('/companies')).json();
+      } catch (e) { /* autocomplete silently unavailable; typing still filters */ }
+    }
+    loadCompanies();
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, ch =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
+    function onCompanyInput() {
+      const q = searchInput.value.trim();
+      document.getElementById('clear-search').classList.toggle('invisible', q.length === 0);
+      renderSuggestions();
+      // Round-trip only when the query is filterable (3+ chars) — or when it
+      // just dropped below the threshold and the list must be un-filtered.
+      const effective = q.length >= 3 ? q : '';
+      if (effective === filters.company) return;
+      clearTimeout(companyDebounce);
+      companyDebounce = setTimeout(() => { filters.company = effective; applyFilters(); }, 300);
+    }
+
+    function renderSuggestions() {
+      const q = searchInput.value.trim().toLowerCase();
+      if (!q) { suggestBox.classList.add('hidden'); return; }
+      const matches = companyList.filter(c => c.company.toLowerCase().includes(q)).slice(0, 8);
+      if (!matches.length) { suggestBox.classList.add('hidden'); return; }
+      suggestBox.innerHTML = matches.map(c => `
+        <button onmousedown="event.preventDefault(); pickCompany(this.dataset.company)"
+                data-company="${escapeHtml(c.company)}"
+                class="w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 flex items-center justify-between gap-3 transition-colors">
+          <span class="truncate">${escapeHtml(c.company)}</span>
+          <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">${c.count} job${c.count !== 1 ? 's' : ''}</span>
+        </button>`).join('');
+      suggestBox.classList.remove('hidden');
+    }
+
+    function hideSuggestions() { suggestBox.classList.add('hidden'); }
+
+    function pickCompany(name) {
+      searchInput.value = name;
+      suggestBox.classList.add('hidden');
+      document.getElementById('clear-search').classList.remove('invisible');
+      clearTimeout(companyDebounce);
+      filters.company = name;
+      applyFilters();
+    }
+
+    function clearCompanySearch() {
+      searchInput.value = '';
+      suggestBox.classList.add('hidden');
+      document.getElementById('clear-search').classList.add('invisible');
+      clearTimeout(companyDebounce);
+      if (filters.company !== '') { filters.company = ''; applyFilters(); }
+      searchInput.focus();
     }
 
     function applyFilters() {
       filters.unseen_only = document.getElementById('unseen-toggle').checked;
+      filters.show_dismissed = document.getElementById('dismissed-toggle').checked;
       const params = new URLSearchParams({
         role_type: filters.role_type,
         status: filters.status,
         unseen_only: filters.unseen_only,
+        sort: filters.sort,
+        show_dismissed: filters.show_dismissed,
+        company: filters.company,
       });
       htmx.ajax('GET', '/jobs?' + params.toString(), { target: '#job-list', swap: 'innerHTML' });
     }
 
-    function toggleDesc(jobId) {
+    // --- Full description disclosure ---
+    function toggleDesc(btn, jobId) {
       const el = document.getElementById('desc-' + jobId);
-      const btn = document.getElementById('desc-btn-' + jobId);
-      if (el.classList.contains('hidden')) {
-        el.classList.remove('hidden');
-        btn.textContent = 'Hide full description';
+      const wasHidden = el.classList.contains('hidden');
+      el.classList.toggle('hidden');
+      btn.classList.toggle('open');
+      if (wasHidden) {
         // Mark as seen when description is opened
         htmx.ajax('PATCH', '/jobs/' + jobId + '/seen', { swap: 'none' });
-      } else {
-        el.classList.add('hidden');
-        btn.textContent = 'Show full description';
       }
     }
   </script>

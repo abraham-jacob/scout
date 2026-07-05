@@ -5,4 +5,12 @@ token.json
 __pycache__/
 *.pyc
 data/
+logs/
 .venv/
+/htmlcov/
+/junit_xml_test_report.xml
+.coverage
+mockups/
+# Personal match-scoring artifacts (never commit)
+profiles/*
+!profiles/README.md
