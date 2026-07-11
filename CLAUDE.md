@@ -67,9 +67,11 @@ exclude_companies` (also enforced again in `save_jobs`).
 
 ### Pass 2 — per-job enrichment (Sonnet, parallel), `agent/enrichment_prompt.md`
 For each survivor, one headless `claude --print` Sonnet call classifies the role into
-one of the **user-configured role types** (or `Other`) and writes a 2–4 sentence
-summary. Runs 8-wide via a `ThreadPoolExecutor`. Jobs classified `Other` (or that
-fail to enrich) are dropped; the rest are saved via `agent/tools.py::save_jobs`,
+one of the **user-configured role types** (or `Other`), writes a 2–4 sentence
+summary, tags the job, and scores it against the candidate's resume/profiles/criteria.
+`enrichment_prompt.md` is a single file covering classification, summary, tags, and
+scoring instructions. Runs 8-wide via a `ThreadPoolExecutor`. Jobs classified `Other`
+(or that fail to enrich) are dropped; the rest are saved via `agent/tools.py::save_jobs`,
 which also does repost detection and unwraps LinkedIn safety-redirect apply URLs.
 
 All user configuration lives in `profiles/config.toml` (loaded and validated by
@@ -112,6 +114,8 @@ tool-definition path is available but not on the main flow.
 
 ## Conventions
 
+- **Never work on the `main` branch directly.** Always create a feature branch
+  (`git checkout -b <branch-name>`) before making changes. PRs merge into `main`.
 - **Every Python function must have a docstring** — this is a hard project rule; the
   codebase follows it uniformly.
 - Model IDs are pinned as constants in `runner.py` (`SCRAPER_MODEL` = Haiku,

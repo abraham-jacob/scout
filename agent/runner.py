@@ -58,7 +58,6 @@ PROMPT_DIR = BASE_DIR / "agent"
 SYSTEM_PROMPT_FILE = PROMPT_DIR / "system_prompt.md"
 CLEAN_PROMPT_FILE  = PROMPT_DIR / "clean_prompt.md"
 ENRICH_PROMPT_FILE = PROMPT_DIR / "enrichment_prompt.md"
-SCORING_PROMPT_FILE = PROMPT_DIR / "scoring_prompt.md"
 
 # Personal match-scoring artifacts (git-ignored; see profiles/README.md).
 # Scoring activates only when resume.md and every profile file referenced by
@@ -562,9 +561,9 @@ def scoring_enabled() -> bool:
 def build_enrich_system_prompt() -> str:
     """Assemble the enrichment system prompt, cached for the process lifetime.
 
-    Base prompt (role_type + summary + tags) always, with the configured role
-    types injected into its {{ROLE_DEFINITIONS}} / {{ROLE_ENUM}} placeholders;
-    when the profile files exist, the scoring instructions plus
+    Reads enrichment_prompt.md (classification + summary + tags + scoring
+    instructions in one file) and injects the configured role types into its
+    {{ROLE_DEFINITIONS}} / {{ROLE_ENUM}} placeholders. When scoring is enabled,
     resume/profiles/criteria are appended. The result is identical for every
     job in a run, which is what lets the Anthropic prompt cache absorb the
     resume and profiles almost for free.
@@ -576,7 +575,6 @@ def build_enrich_system_prompt() -> str:
     roles = load_roles()
     parts = [ENRICH_PROMPT_FILE.read_text()]
     if scoring_enabled():
-        parts.append(SCORING_PROMPT_FILE.read_text())
         parts.append("# Resume\n\n" + RESUME_FILE.read_text())
         for role in roles:
             if role.profile:
@@ -682,7 +680,7 @@ def enrich_one(job: dict) -> dict:
     """Classify, summarize, tag, and score one job against the candidate's profiles.
 
     Fires a single headless Sonnet call (enrichment_prompt.md, plus
-    scoring_prompt.md + profiles when scoring is enabled) with the job's
+    resume/profiles/criteria when scoring is enabled) with the job's
     title + cleaned description. Returns role_type / description_summary / tags
     plus the scoring fields (fit_score, criteria_score, dealbreakers, match_reason,
     and the derived match_score — all None/[] when scoring is disabled); on any
