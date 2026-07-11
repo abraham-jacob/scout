@@ -117,13 +117,13 @@ class TestSystemPromptAssembly:
     """Test build_enrich_system_prompt with and without profile files."""
 
     def test_without_profiles_base_prompt_only(self, tmp_path, monkeypatch):
-        """No profile files -> scoring disabled, base prompt only."""
+        """No profile files -> scoring disabled, resume/criteria not appended."""
         monkeypatch.setattr(runner, "_enrich_system_prompt_cache", None)
         monkeypatch.setattr(runner, "RESUME_FILE", tmp_path / "missing.md")
         assert not scoring_enabled()
         prompt = build_enrich_system_prompt()
         assert "role_type" in prompt
-        assert "fit_score" not in prompt
+        assert "# Resume" not in prompt
 
     def test_with_profiles_includes_scoring_and_artifacts(self, profile_files):
         """All three files -> scoring prompt + resume + both profiles included."""
