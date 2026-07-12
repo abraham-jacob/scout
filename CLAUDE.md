@@ -38,9 +38,11 @@ pipenv run unit-tests                      # full suite with junit + HTML covera
 
 ## Architecture
 
-The system is **two Claude passes orchestrated by `agent/runner.py`**, which is
-launched as a subprocess by the web UI. Read `agent/runner.py`'s module docstring
-first — it is the map for the whole pipeline.
+The system is **three passes orchestrated by `agent/runner.py`** — a browser
+scrape (Pass 1) and two headless passes, description cleaning (Pass 2) and
+per-job enrichment/scoring (Pass 3) — launched as a subprocess by the web UI.
+Read `agent/runner.py`'s module docstring first — it is the map for the whole
+pipeline, and its Pass 1/2/3 numbering is authoritative.
 
 ### Pass 1 — browser scrape (Haiku), `agent/system_prompt.md`
 `runner.py` spawns `claude --print --chrome` on Haiku with `system_prompt.md`. That
@@ -65,26 +67,48 @@ scrape errors, jobs already in the DB, already-applied, closed (`jobState != LIS
 jobs with no company name, and companies in the config's `[filters]
 exclude_companies` (also enforced again in `save_jobs`).
 
-### Pass 2 — per-job enrichment (Sonnet, parallel), `agent/enrichment_prompt.md`
+### Pass 2 — description cleaning (Haiku, parallel), `agent/clean_prompt.md`
+For each survivor, one headless call (`run_headless("clean", …)`) strips non-role
+boilerplate from the raw description — EEO/DEI statements, legal disclaimers,
+generic culture/benefits marketing, "About [Company]" fluff — and returns a single
+`{"description_clean": "..."}` JSON field. Runs `MAX_WORKERS`-wide via a
+`ThreadPoolExecutor`. A failed call falls back to the raw description so Pass 3
+always has something to work with. On the Claude backend this is Haiku
+(`CLEAN_MODEL`); on the local backend it's the configured `[llm.local] model`.
+
+### Pass 3 — per-job enrichment (Sonnet, parallel), `agent/enrichment_prompt.md`
 For each survivor, one headless `claude --print` Sonnet call classifies the role into
 one of the **user-configured role types** (or `Other`), writes a 2–4 sentence
 summary, tags the job, and scores it against the candidate's resume/profiles/criteria.
 `enrichment_prompt.md` is a single file covering classification, summary, tags, and
-scoring instructions. Runs 8-wide via a `ThreadPoolExecutor`. Jobs classified `Other`
+scoring instructions. Runs `MAX_WORKERS`-wide via a `ThreadPoolExecutor`. Jobs classified `Other`
 (or that fail to enrich) are dropped; the rest are saved via `agent/tools.py::save_jobs`,
 which also does repost detection and unwraps LinkedIn safety-redirect apply URLs.
 
 All user configuration lives in `profiles/config.toml` (loaded and validated by
-`app/config.py::load_config`). The file is **required**, with five required
+`app/config.py::load_config`). The file is **required**, with six required
 sections and no in-code defaults: `[[roles]]` (≥1 role type), `[gmail]` (label),
 `[filters]` (exclude_companies, may be empty), `[scoring]` (fit/criteria
-weights summing to 1, plus dealbreaker_cap used by `compute_match_score`), and
+weights summing to 1, plus dealbreaker_cap used by `compute_match_score`),
 `[logging]` (dir for the daily app log and the opt-in model-call log; see
-`app/logging_setup.py`). One optional section, `[scrape]`, carries
-`download_dir` — where the browser saves the scrape blob; it defaults to
-`~/Downloads` (correct on Windows/macOS/Linux) and `runner.download_dir()`
-expands it, so it's the only config path with a cross-platform default rather
-than failing loudly. Each role carries the classification definition injected into the prompt's
+`app/logging_setup.py`), and `[llm]` (`backend` + `max_workers`, below). One
+optional section, `[scrape]`, carries `download_dir` — where the browser saves
+the scrape blob; it defaults to `~/Downloads` (correct on Windows/macOS/Linux)
+and `runner.download_dir()` expands it, so it's the only config path with a
+cross-platform default rather than failing loudly. `[llm]` carries `backend`
+(required, `"claude"` or `"local"` — no default, so the config always states
+which one) which selects the backend for the two **headless** passes —
+description cleaning and enrichment/scoring — via `runner.run_headless()`, and
+`max_workers` (required, the Pass 2/3 pool width, tuned per backend). `"local"`
+routes both passes (together, never split) to a local OpenAI-compatible server
+(e.g. Ollama) configured under `[llm.local]` (`base_url`, `model`, optional
+`api_key`/`timeout`). Two optional per-pass sub-tables, `[llm.local.clean]` and
+`[llm.local.enrich]`, carry request parameters (e.g. `temperature`,
+`reasoning_effort`) merged verbatim into that pass's chat-completion JSON by
+`runner._run_local_llm`; values must be scalars and may not set the
+pipeline-owned `model`/`messages`/`stream` keys (validated in
+`config._parse_local_params`). The browser scrape always runs on Claude.
+Each role carries the classification definition injected into the prompt's
 `{{ROLE_DEFINITIONS}}`/`{{ROLE_ENUM}}` placeholders, an optional per-role profile
 file for scoring, and drives the UI filter buttons and chip colors. `jobs.role_type`
 stores the role's `name` verbatim. `runner.validate_setup()` fails fast at pipeline
@@ -118,9 +142,11 @@ tool-definition path is available but not on the main flow.
   (`git checkout -b <branch-name>`) before making changes. PRs merge into `main`.
 - **Every Python function must have a docstring** — this is a hard project rule; the
   codebase follows it uniformly.
-- Model IDs are pinned as constants in `runner.py` (`SCRAPER_MODEL` = Haiku,
-  `ENRICH_MODEL` = Sonnet). Each `claude` subprocess has a `SUBPROCESS_TIMEOUT_S`
-  wall-clock kill; the web UI adds a 30-minute overall guardrail.
+- Claude model IDs are pinned as constants in `runner.py` (`SCRAPER_MODEL` and
+  `CLEAN_MODEL` = Haiku, `ENRICH_MODEL` = Sonnet); the local-backend model comes
+  from `[llm.local] model` in the config instead. Each `claude` subprocess has a
+  `SUBPROCESS_TIMEOUT_S` wall-clock kill (local calls use `[llm.local] timeout`);
+  the web UI adds a 30-minute overall guardrail.
 - Tests add the project root to `sys.path` via `tests/conftest.py`; import as
   `from app...` / `from agent...`.
 

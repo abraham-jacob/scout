@@ -31,6 +31,8 @@ The summary MUST cover, whenever the posting states them:
 3. **Compensation — this is mandatory, not optional.** If the posting states any salary number or range, it must appear in the summary. Omitting stated compensation is an error. If no compensation is stated, say nothing about it.
 4. **Workplace arrangement** (remote / hybrid / on-site) when stated, including detail such as required office days.
 
+**Do not infer a workplace arrangement from a bare location.** A city, state, or "based in X" clause (including one that only scopes a salary figure, e.g. "for positions based in CA, the range is...") states where the job or its pay band sits — it does NOT by itself mean the role is on-site there. Only describe the role as on-site/hybrid/remote when the posting uses that kind of explicit arrangement language (e.g. "on-site," "in-office," "remote," "hybrid," "X days a week in the office"). If the posting gives a location but never states an arrangement, say nothing about workplace arrangement in the summary.
+
 **Required vs. preferred — do not conflate.** Only describe something as
 "required" if the posting lists it under requirements/qualifications. Items
 under "preferred", "nice to have", "bonus", "strong candidates may also
@@ -56,7 +58,11 @@ Use these canonical forms so tags stay consistent across jobs:
   detail when stated: `Hybrid · 3 days`, `Remote · US only`. If the
   description mixes signals (e.g. hybrid with required office days), pick the
   single tag that best describes the arrangement — never emit two. If the
-  posting says nothing about workplace arrangement, emit no workplace tag.
+  posting says nothing about workplace arrangement, emit no workplace tag. A
+  bare location or a salary clause scoped to a location ("based in CA", "for
+  positions in San Mateo, CA, the range is...") is NOT arrangement language —
+  never emit `On-site` (or any workplace tag) from a location alone; the
+  posting must explicitly say remote/hybrid/on-site/in-office.
 - **Years of experience** — `N+ yrs`, where N is the **minimum qualifying
   number** (the entry bar):
   - A range such as "3–7 years" has a baseline of 3 → tag `3+ yrs`, never `7+ yrs`.
@@ -143,7 +149,15 @@ Weigh gaps by their kind, not their count:
 - **Either/or requirements count as satisfied by any one option.** "Python or
   Golang" is met by Python alone; "AWS, Azure, or GCP" is met by AWS alone.
   Never treat the unmet alternatives of a satisfied either/or requirement as
-  gaps, in the score or in `match_reason`.
+  gaps, in the score or in `match_reason`. This applies even when the
+  either/or list has three or more items and even when it's phrased as a
+  streaming/tooling list rather than a clean "X or Y": a posting requiring
+  "experience with Airflow, Kafka, or dbt" is satisfied by Airflow alone —
+  do not name Kafka or dbt as a gap in `match_reason` once Airflow is present
+  in the resume/profile. Before naming ANY item from a comma/slash-separated
+  requirement list as a gap, check whether the candidate satisfies a
+  different item in that same list — if so, the requirement is met and none
+  of the list's other items belong in `match_reason`.
 
 ## `criteria_score` — 0 to 100, or null
 
