@@ -24,6 +24,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from agent.runner import SetupError, check_setup
 from app.config import load_roles, role_color_map
 from app.database import JOB_STATUSES, get_connection, init_db
 from app.logging_setup import setup_logging
@@ -404,22 +405,44 @@ async def trigger_run(
     url: str = Form(default=""),
     log_model_calls: bool = Form(default=False),
 ) -> HTMLResponse:
-    """Start a Scout run in the background and return the run drawer partial."""
-    start = False
-    with _run_lock:
-        if not _run["running"]:
-            _init_run_state()
-            start = True
+    """Start a Scout run in the background and return the run drawer partial.
 
-    if start:
-        logging.getLogger("scout").info(
-            "Run triggered from UI (url=%s, model call logging %s)",
-            url or "gmail", "on" if log_model_calls else "off")
-        threading.Thread(
-            target=_start_run_background,
-            args=(url or None, log_model_calls),
-            daemon=True,
-        ).start()
+    Runs the same setup checks the CLI runs (check_setup) synchronously first,
+    so a broken config or an unreachable / wrong-model local-LLM backend
+    surfaces in the drawer immediately — before any subprocess, browser, or
+    scrape work is started and wasted.
+    """
+    with _run_lock:
+        already_running = _run["running"]
+    if already_running:
+        return _render_drawer(request)
+
+    try:
+        check_setup()
+    except SetupError as exc:
+        with _run_lock:
+            _init_run_state()
+            _run["running"] = False
+            _run["error"] = str(exc)
+            _run["finished_at"] = datetime.now(timezone.utc)
+        logging.getLogger("scout").error("Run blocked by setup check: %s", exc)
+        return _render_drawer(request)
+
+    with _run_lock:
+        already_running = _run["running"]
+        if not already_running:
+            _init_run_state()
+    if already_running:
+        return _render_drawer(request)
+
+    logging.getLogger("scout").info(
+        "Run triggered from UI (url=%s, model call logging %s)",
+        url or "gmail", "on" if log_model_calls else "off")
+    threading.Thread(
+        target=_start_run_background,
+        args=(url or None, log_model_calls),
+        daemon=True,
+    ).start()
 
     return _render_drawer(request)
 

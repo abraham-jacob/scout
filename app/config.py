@@ -21,6 +21,20 @@ copyable example):
   on Windows/macOS/Linux); override it only if you've changed Chrome's
   download location. Unlike the sections above it has a sensible cross-platform
   default because it's an environment path, not a behavior knob.
+- ``[llm]`` (required) — ``backend``: which model backend runs the two headless
+  passes, description cleaning (Pass 2) and enrichment/scoring (Pass 3). Either
+  ``"claude"`` (the pipeline's original all-Claude behavior) or ``"local"`` to
+  route both passes to a local OpenAI-compatible server (e.g. Ollama); there is
+  no default, so the config always states which one is in use. ``max_workers``
+  (also required): the width of the Pass 2/3 worker pool, a positive integer —
+  tune it to the active backend (a Claude run can go wide; a memory-constrained
+  local box may need 1). Pass 1 (the browser scrape) always runs on Claude. When
+  ``backend`` is ``"local"``, a ``[llm.local]`` subsection must supply
+  ``base_url`` (the server's OpenAI-compatible endpoint) and ``model``, and may
+  supply an optional ``api_key`` and ``timeout`` (seconds). Two further optional
+  sub-tables, ``[llm.local.clean]`` and ``[llm.local.enrich]``, carry per-pass
+  request parameters (e.g. ``temperature``, ``reasoning_effort``) merged verbatim
+  into the chat-completion JSON for that pass — see ``_parse_local_params``.
 
 Missing required sections or malformed values raise ValueError rather than
 falling back to hidden defaults, so a typo can't silently change behavior.
@@ -37,6 +51,23 @@ CONFIG_FILE = PROFILES_DIR / "config.toml"
 # Chrome's default download folder on every supported OS. Used when the
 # optional [scrape] download_dir isn't set (see the module docstring).
 DEFAULT_DOWNLOAD_DIR = "~/Downloads"
+
+# LLM backend for the two headless passes (clean + enrich). "claude" runs them
+# on the Claude CLI; "local" routes them to an OpenAI-compatible server. The
+# [llm] section and its `backend` are required — there is no default backend, so
+# the config always states which one is in use rather than leaving it implicit.
+VALID_LLM_BACKENDS = ("claude", "local")
+# Keys the local-backend request builder owns; a user's per-pass param table
+# (see _parse_local_params) may not set these, so a config typo can't clobber
+# the messages/model/stream the pipeline controls. Everything else is fair game:
+# the code no longer forces a temperature (the server default applies unless the
+# table sets one), and only response_format defaults to JSON mode, which a table
+# entry may still override.
+RESERVED_LOCAL_PARAM_KEYS = ("model", "messages", "stream")
+# Read timeout (seconds) for a local-LLM call when [llm.local] omits `timeout`.
+# Generous on purpose: a remote box running a 20B model can be much slower than
+# the Claude API.
+DEFAULT_LOCAL_TIMEOUT = 300.0
 
 
 @dataclass(frozen=True)
@@ -79,6 +110,14 @@ class Config:
     dealbreaker_cap: float
     log_dir: str
     download_dir: str
+    llm_backend: str
+    max_workers: int
+    local_base_url: str | None
+    local_model: str | None
+    local_api_key: str | None
+    local_timeout: float
+    local_clean_params: dict
+    local_enrich_params: dict
 
 
 def _parse_roles(data: dict) -> list[Role]:
@@ -121,6 +160,120 @@ def _require_number(section: dict, section_name: str, key: str) -> float:
             f"profiles/config.toml: [{section_name}] needs a numeric '{key}'"
         )
     return float(value)
+
+
+def _require_positive_int(section: dict, section_name: str, key: str) -> int:
+    """Return section[key] as an int ≥ 1, or raise a ValueError naming it."""
+    value = section.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"profiles/config.toml: [{section_name}] needs an integer '{key}'"
+        )
+    if value < 1:
+        raise ValueError(
+            f"profiles/config.toml: [{section_name}] '{key}' must be at least 1"
+        )
+    return value
+
+
+def _parse_local_params(local: dict, pass_name: str) -> dict:
+    """Return the [llm.local.<pass_name>] per-pass request params, or {} if unset.
+
+    These optional sub-tables (pass_name is "clean" or "enrich") carry parameters
+    merged verbatim into the OpenAI-compatible chat-completion payload for that
+    pass — e.g. temperature or GPT-OSS's reasoning_effort. Values must be scalars
+    (str/int/float/bool); nested tables/arrays are rejected as they don't belong
+    in the request body and are almost always a mistake. Keys the request builder
+    owns (RESERVED_LOCAL_PARAM_KEYS) are rejected so a typo can't clobber them.
+    Param values themselves are NOT range-checked — they're model-specific, so an
+    invalid one is left for the server to reject rather than hardcoded here.
+    """
+    section = local.get(pass_name)
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise ValueError(
+            f"profiles/config.toml: [llm.local.{pass_name}] must be a table of "
+            "request parameters (e.g. temperature, reasoning_effort)"
+        )
+    for key, value in section.items():
+        if key in RESERVED_LOCAL_PARAM_KEYS:
+            raise ValueError(
+                f"profiles/config.toml: [llm.local.{pass_name}] may not set "
+                f"'{key}' — that field is controlled by the pipeline"
+            )
+        if isinstance(value, bool):
+            continue
+        if not isinstance(value, (str, int, float)):
+            raise ValueError(
+                f"profiles/config.toml: [llm.local.{pass_name}] '{key}' must be a "
+                "scalar (string, number, or boolean), not a table or array"
+            )
+    return dict(section)
+
+
+def _parse_llm(
+    data: dict,
+) -> tuple[str, int, str | None, str | None, str | None, float, dict, dict]:
+    """Parse and validate the required [llm] / optional [llm.local] sections.
+
+    Returns (backend, max_workers, base_url, model, api_key, timeout,
+    clean_params, enrich_params). The [llm] section is required and must state
+    `backend` ("claude" or "local") and `max_workers` (the Pass 2/3 pool width, a
+    positive int) explicitly — there are no hidden defaults, so the config always
+    says which backend runs and how wide. When backend is "local", [llm.local]
+    must supply non-empty base_url and model; api_key and timeout are optional, as
+    are the [llm.local.clean] / [llm.local.enrich] per-pass param tables.
+    Malformed values raise ValueError, matching the rest of the loader.
+    """
+    llm = data.get("llm")
+    if not isinstance(llm, dict):
+        raise ValueError(
+            'profiles/config.toml: [llm] section is required — it must set '
+            '`backend` ("claude" or "local") and `max_workers`. See '
+            "profiles/README.md."
+        )
+
+    backend = str(llm.get("backend") or "").strip()
+    if backend not in VALID_LLM_BACKENDS:
+        raise ValueError(
+            "profiles/config.toml: [llm] backend is required and must be one of "
+            f"{', '.join(VALID_LLM_BACKENDS)} (got {backend!r})"
+        )
+
+    max_workers = _require_positive_int(llm, "llm", "max_workers")
+
+    if backend != "local":
+        return (backend, max_workers, None, None, None,
+                DEFAULT_LOCAL_TIMEOUT, {}, {})
+
+    local = llm.get("local")
+    if not isinstance(local, dict):
+        raise ValueError(
+            "profiles/config.toml: [llm] backend = \"local\" requires a "
+            "[llm.local] section with base_url and model"
+        )
+    base_url = str(local.get("base_url") or "").strip()
+    model = str(local.get("model") or "").strip()
+    if not base_url or not model:
+        raise ValueError(
+            "profiles/config.toml: [llm.local] needs a non-empty 'base_url' "
+            "(the server's OpenAI-compatible endpoint) and 'model'"
+        )
+    api_key_raw = local.get("api_key")
+    api_key = str(api_key_raw).strip() if api_key_raw else None
+    timeout = DEFAULT_LOCAL_TIMEOUT
+    if "timeout" in local:
+        timeout = _require_number(local, "llm.local", "timeout")
+        if timeout <= 0:
+            raise ValueError(
+                "profiles/config.toml: [llm.local] timeout must be a positive "
+                "number of seconds"
+            )
+    clean_params = _parse_local_params(local, "clean")
+    enrich_params = _parse_local_params(local, "enrich")
+    return (backend, max_workers, base_url, model, api_key, timeout,
+            clean_params, enrich_params)
 
 
 def load_config() -> Config:
@@ -207,6 +360,9 @@ def load_config() -> Config:
             )
         download_dir = raw_download
 
+    (llm_backend, max_workers, local_base_url, local_model, local_api_key,
+     local_timeout, local_clean_params, local_enrich_params) = _parse_llm(data)
+
     return Config(
         roles=roles,
         gmail_label=gmail_label,
@@ -216,6 +372,14 @@ def load_config() -> Config:
         dealbreaker_cap=dealbreaker_cap,
         log_dir=log_dir,
         download_dir=download_dir,
+        llm_backend=llm_backend,
+        max_workers=max_workers,
+        local_base_url=local_base_url,
+        local_model=local_model,
+        local_api_key=local_api_key,
+        local_timeout=local_timeout,
+        local_clean_params=local_clean_params,
+        local_enrich_params=local_enrich_params,
     )
 
 

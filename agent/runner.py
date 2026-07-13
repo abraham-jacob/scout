@@ -25,6 +25,12 @@ Pass 3 — Per-job enrichment (Sonnet, parallel, enrichment_prompt.md)
     Uses description_clean so the model sees only the signal, not the noise.
     Jobs classified Other (or that fail to enrich) are dropped; the rest are saved.
 
+Passes 2 and 3 are the two "headless" passes and run on a configurable backend
+(profiles/config.toml [llm] backend): the default "claude" shells out to the
+`claude` CLI, while "local" routes both through run_headless() to a local
+OpenAI-compatible server (e.g. Ollama). Pass 1 always runs on Claude — it drives
+the browser and is agentic, which a local text model can't do.
+
 Usage:
     python -m agent.runner                 # reads Gmail for URLs
     python -m agent.runner --url <url>     # specific URL
@@ -45,6 +51,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import httpx
 from google.auth.exceptions import RefreshError
 
 from app.config import load_config, load_roles
@@ -74,10 +81,11 @@ SCRAPER_MODEL = "claude-haiku-4-5-20251001"
 CLEAN_MODEL   = "claude-haiku-4-5-20251001"
 ENRICH_MODEL  = "claude-sonnet-4-6"
 
-# Width of the Pass 2/Pass 3 worker pools. Narrow on purpose: fewer
-# simultaneous first-wave calls means fewer duplicate cache writes of the
-# shared system prompt, at some cost in wall-clock time.
-MAX_WORKERS = 2
+# The Pass 2/Pass 3 worker-pool width is configurable per backend via
+# [llm] max_workers (config.max_workers). It's a knob because the right value
+# depends on the active backend: a Claude run trades wall-clock against
+# duplicate prompt-cache writes of the shared system prompt, while a local
+# server is bounded by its own VRAM/throughput (a 16GB box may only manage 1).
 
 # The clean/enrich calls are structured extraction against an explicit rubric;
 # extended thinking adds ~1.5K billed-but-invisible output tokens per call
@@ -323,6 +331,133 @@ def _extract_json(text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Headless-pass backend dispatch (Pass 2 clean + Pass 3 enrich)
+# ---------------------------------------------------------------------------
+
+# Which Claude model each headless pass uses when backend == "claude". On the
+# local backend both passes use the single configured [llm.local] model.
+_PASS_CLAUDE_MODEL = {"clean": CLEAN_MODEL, "enrich": ENRICH_MODEL}
+
+
+def run_headless(pass_name: str, system_prompt: str, user_message: str) -> str | None:
+    """Run one headless structured call for Pass 2/3 on the configured backend.
+
+    Dispatches to Claude (a `claude --print` subprocess) or a local
+    OpenAI-compatible server (e.g. Ollama) according to [llm] backend in the
+    config. pass_name is "clean" or "enrich". Handles model-call logging and
+    token/cost accounting internally and returns the raw model result text (the
+    JSON blob the caller parses with _extract_json), or None on any failure so
+    the caller can fall back gracefully. Pass 1 (the browser scrape) does not go
+    through here — it always runs on Claude via run_claude.
+    """
+    config = load_config()
+    if config.llm_backend == "local":
+        model = config.local_model
+        log_model_call(pass_name, model, system_prompt, user_message)
+        return _run_local_llm(config, pass_name, model, system_prompt,
+                              user_message)
+    model = _PASS_CLAUDE_MODEL[pass_name]
+    log_model_call(pass_name, model, system_prompt, user_message)
+    return _run_claude_headless(model, system_prompt, user_message)
+
+
+def _run_claude_headless(model: str, system_prompt: str,
+                         user_message: str) -> str | None:
+    """Run one headless `claude --print --output-format json` call.
+
+    The shared subprocess path for the clean and enrich passes: extended
+    thinking off, dynamic system-prompt sections excluded, hard-capped at
+    SUBPROCESS_TIMEOUT_S. Accumulates usage/cost into _tokens and returns the
+    envelope's `result` text, or None on timeout / subprocess / parse failure.
+    """
+    cmd = [
+        claude_executable(),
+        "--print",
+        "--model", model,
+        "--exclude-dynamic-system-prompt-sections",
+        "--system-prompt", system_prompt,
+        "--output-format", "json",
+        user_message,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(BASE_DIR), capture_output=True, text=True,
+            timeout=SUBPROCESS_TIMEOUT_S, env=_NO_THINKING_ENV,
+        )
+        envelope = json.loads(proc.stdout)
+    except subprocess.TimeoutExpired:
+        print(f"  claude {model} call timed out (> {SUBPROCESS_TIMEOUT_S}s)",
+              file=sys.stderr)
+        return None
+    except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
+        print(f"  claude {model} call failed: {exc}", file=sys.stderr)
+        return None
+
+    _add_usage(
+        envelope.get("usage", {}),
+        envelope.get("total_cost_usd", envelope.get("cost_usd", 0.0)),
+    )
+    return envelope.get("result", "")
+
+
+def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
+                   user_message: str) -> str | None:
+    """POST one chat-completion to the configured OpenAI-compatible server.
+
+    Talks to config.local_base_url (e.g. an Ollama server's /v1 endpoint),
+    asking for JSON output. Temperature is NOT forced — the server/model default
+    applies unless the per-pass param table sets one. That optional table
+    ([llm.local.<pass_name>], e.g. temperature or GPT-OSS's reasoning_effort) is
+    merged over the JSON-mode baseline — so a user can raise the effort for enrich
+    and drop it for clean — but the model/messages/stream fields the pipeline owns
+    are re-asserted afterward so a stray config key can't clobber them. Maps the
+    returned OpenAI usage object into the token tracker at zero cost (local
+    inference is free to us) and returns the assistant message text, or None on
+    any HTTP/parse failure so the caller falls back gracefully. _extract_json
+    still tolerates stray prose if the server ignores the JSON-mode request.
+    """
+    url = config.local_base_url.rstrip("/") + "/chat/completions"
+    headers = {}
+    if config.local_api_key:
+        headers["Authorization"] = f"Bearer {config.local_api_key}"
+    pass_params = (config.local_clean_params if pass_name == "clean"
+                   else config.local_enrich_params)
+    payload = {
+        "response_format": {"type": "json_object"},
+        **pass_params,
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "stream": False,
+    }
+    try:
+        resp = httpx.post(url, json=payload, headers=headers,
+                          timeout=config.local_timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+    except httpx.HTTPError as exc:
+        print(f"  local LLM call to {url} failed: {exc}", file=sys.stderr)
+        return None
+    except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
+        print(f"  local LLM returned an unexpected response: {exc}",
+              file=sys.stderr)
+        return None
+
+    usage = data.get("usage") or {}
+    _add_usage(
+        {
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+        },
+        0.0,
+    )
+    return content
+
+
+# ---------------------------------------------------------------------------
 # Pass 1 — browser scrape (Haiku)
 # ---------------------------------------------------------------------------
 
@@ -441,60 +576,66 @@ def run_claude(system_prompt_file: Path, user_message: str) -> str:
 def clean_one(job: dict) -> dict | None:
     """Strip EEO boilerplate from one job's raw description.
 
-    Fires a single headless Haiku call (clean_prompt.md) that returns JSON
-    with `description_clean` (boilerplate stripped). Returns None on failure —
-    the caller falls back gracefully so enrichment always has something to work with.
+    Fires a single headless call (clean_prompt.md) on the configured backend
+    (run_headless) that returns JSON with `description_clean` (boilerplate
+    stripped). Returns None on failure — the caller falls back gracefully so
+    enrichment always has something to work with.
     """
     desc = job.get("description_raw") or ""
     if not desc:
         return None
 
-    system_prompt = CLEAN_PROMPT_FILE.read_text()
-    log_model_call("clean", CLEAN_MODEL, system_prompt, desc)
-
-    cmd = [
-        claude_executable(),
-        "--print",
-        "--model", CLEAN_MODEL,
-        "--exclude-dynamic-system-prompt-sections",
-        "--system-prompt", system_prompt,
-        "--output-format", "json",
-        desc,
-    ]
-
-    try:
-        proc = subprocess.run(
-            cmd, cwd=str(BASE_DIR), capture_output=True, text=True,
-            timeout=SUBPROCESS_TIMEOUT_S, env=_NO_THINKING_ENV,
-        )
-        envelope = json.loads(proc.stdout)
-    except subprocess.TimeoutExpired:
-        print(f"  clean TIMEOUT for {job.get('job_id')} — falling back to raw",
+    result = run_headless("clean", CLEAN_PROMPT_FILE.read_text(), desc)
+    if result is None:
+        print(f"  clean failed for {job.get('job_id')} — falling back to raw",
               file=sys.stderr)
         return None
-    except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
-        print(f"  clean failed for {job.get('job_id')}: {exc}", file=sys.stderr)
-        return None
 
-    _add_usage(
-        envelope.get("usage", {}),
-        envelope.get("total_cost_usd", envelope.get("cost_usd", 0.0)),
-    )
-    parsed = _extract_json(envelope.get("result", ""))
+    parsed = _extract_json(result)
     clean = (parsed.get("description_clean") or "").strip()
     return {"description_clean": clean or None}
+
+
+def _retry_local_failures(jobs: list[dict], results: list, is_failure,
+                          one_fn, max_workers: int, label: str) -> None:
+    """Retry once, in place, the subset of `results` that `is_failure` flags.
+
+    Local-only: the local backend is the flaky one (occasional generation
+    stalls/timeouts on the local server — observed and documented during
+    tuning, not a Claude API issue), so this is called only when
+    config.llm_backend == "local". Re-runs `one_fn` on just the failed jobs'
+    subset (parallel, same max_workers) and overwrites their slot in `results`
+    with whatever the retry returns — success or a repeat failure, exactly one
+    extra attempt, not a retry loop. A quiet no-op when nothing failed.
+    """
+    failed_idx = [i for i, r in enumerate(results) if is_failure(r)]
+    if not failed_idx:
+        return
+    print(f"  retrying {len(failed_idx)} failed {label} call(s)...", flush=True)
+    retry_jobs = [jobs[i] for i in failed_idx]
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        retry_results = list(pool.map(one_fn, retry_jobs))
+    for i, res in zip(failed_idx, retry_results):
+        results[i] = res
 
 
 def clean_jobs(jobs: list[dict]) -> None:
     """Clean descriptions in-place (parallel Haiku calls).
 
-    Sets description_clean on each job. Falls back to description_raw when a
-    call fails so enrichment always has something to work with.
+    Sets description_clean on each job. On the local backend, a job whose
+    clean_one call fails gets one retry pass (_retry_local_failures) before
+    falling back — the local server's occasional stalls are usually transient,
+    so a second attempt often succeeds. Still falls back to description_raw if
+    the retry also fails, so enrichment always has something to work with.
     """
-    print(f"Cleaning {len(jobs)} descriptions (parallel Haiku calls)...", flush=True)
+    print(f"Cleaning {len(jobs)} descriptions (parallel calls)...", flush=True)
     t0 = time.monotonic()
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+    config = load_config()
+    with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
         results = list(pool.map(clean_one, jobs))
+    if config.llm_backend == "local":
+        _retry_local_failures(jobs, results, lambda r: r is None, clean_one,
+                              config.max_workers, "clean")
     for job, result in zip(jobs, results):
         job["description_clean"] = (
             (result or {}).get("description_clean") or job.get("description_raw") or ""
@@ -511,25 +652,35 @@ MAX_TAGS = 10
 _enrich_system_prompt_cache: str | None = None
 
 
-def validate_setup() -> None:
-    """Fail fast with guidance when the required user setup is missing.
+class SetupError(Exception):
+    """Raised when required user setup is missing, malformed, or unreachable.
 
-    Called at pipeline start so a broken setup errors immediately instead of
-    mid-run: the roles config must load (≥1 role), the `claude` CLI must be on
-    PATH (every pass shells out to it), profiles/resume.md must exist (every
-    kept job is scored against it), and any profile file a role references must
-    exist.
+    The CLI entry point turns this into a clean `sys.exit`; the web UI catches
+    it and renders the message in the run drawer instead of launching the
+    pipeline, so both callers share one set of checks (check_setup).
+    """
+
+
+def check_setup() -> None:
+    """Validate required user setup, raising SetupError on the first problem.
+
+    The shared check for both entry points (CLI validate_setup and the web UI's
+    Run button) so a broken setup is caught before any work: the roles config
+    must load (≥1 role), the `claude` CLI must be on PATH (Pass 1 shells out to
+    it), profiles/resume.md must exist (every kept job is scored against it),
+    any profile file a role references must exist, and — on the local backend —
+    the server must be reachable and serving the configured model.
     """
     try:
         roles = load_roles()
     except ValueError as exc:
-        sys.exit(f"Config error: {exc}")
+        raise SetupError(f"Config error: {exc}")
     try:
         claude_executable()
     except FileNotFoundError as exc:
-        sys.exit(f"Setup error: {exc}")
+        raise SetupError(f"Setup error: {exc}")
     if not RESUME_FILE.exists():
-        sys.exit(
+        raise SetupError(
             "profiles/resume.md is required — every kept job is scored "
             "against it. Add your resume as markdown, then re-run. "
             "See profiles/README.md."
@@ -537,10 +688,73 @@ def validate_setup() -> None:
     missing = [role.profile for role in roles
                if role.profile and not (PROFILES_DIR / role.profile).exists()]
     if missing:
-        sys.exit(
+        raise SetupError(
             "Config error: profiles/config.toml references profile file(s) "
             f"that don't exist: {', '.join(missing)}. Create them or remove "
             "the 'profile' key(s) to score those roles on the resume alone."
+        )
+
+    config = load_config()
+    if config.llm_backend == "local":
+        _verify_local_llm(config)
+
+
+def validate_setup() -> None:
+    """CLI wrapper around check_setup that exits cleanly on any setup failure.
+
+    Called at pipeline start (agent.runner main) so a broken setup errors
+    immediately with guidance instead of failing mid-run. The web UI calls
+    check_setup directly and renders the SetupError rather than exiting.
+    """
+    try:
+        check_setup()
+    except SetupError as exc:
+        sys.exit(str(exc))
+
+
+def _verify_local_llm(config) -> None:
+    """Verify the local-LLM server is reachable and serving the configured model.
+
+    Probes the OpenAI-compatible /models endpoint with a short timeout and
+    raises SetupError if the server can't be reached (wrong host / down), if the
+    response isn't an OpenAI-compatible model list, or if the list doesn't
+    include [llm.local] model — so a misconfigured backend fails at startup,
+    before Pass 1, instead of failing every clean/enrich call mid-run. Only
+    called when the [llm] backend is "local".
+    """
+    url = config.local_base_url.rstrip("/") + "/models"
+    headers = {}
+    if config.local_api_key:
+        headers["Authorization"] = f"Bearer {config.local_api_key}"
+    try:
+        resp = httpx.get(url, headers=headers, timeout=5.0)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise SetupError(
+            f"Setup error: local LLM server at {config.local_base_url} is "
+            f"unreachable ({exc}). Is it running and reachable from this "
+            "machine? Check [llm.local] base_url in profiles/config.toml, or "
+            'set [llm] backend = "claude" to use the Claude API instead.'
+        )
+    try:
+        data = resp.json()
+        available = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise SetupError(
+            f"Setup error: local LLM server at {config.local_base_url} returned "
+            f"an unexpected /models response ({exc}). Is base_url pointing at an "
+            "OpenAI-compatible endpoint (usually one ending in /v1)?"
+        )
+    if config.local_model not in available:
+        listed = ", ".join(sorted(available)) or "none"
+        raise SetupError(
+            f"Setup error: local LLM server at {config.local_base_url} does not "
+            f"serve a model with the exact id {config.local_model!r} (it serves: "
+            f"{listed}). [llm.local] model must match one of those ids exactly, "
+            'including any tag — e.g. "scout-enrich:latest", not "scout-enrich". '
+            "Copy the id from your server's model list (for Ollama, `ollama "
+            f"list`), or pull it if it's missing (e.g. `ollama pull "
+            f"{config.local_model}`)."
         )
 
 
@@ -679,9 +893,9 @@ _ENRICH_FAILURE = {
 def enrich_one(job: dict) -> dict:
     """Classify, summarize, tag, and score one job against the candidate's profiles.
 
-    Fires a single headless Sonnet call (enrichment_prompt.md, plus
-    resume/profiles/criteria when scoring is enabled) with the job's
-    title + cleaned description. Returns role_type / description_summary / tags
+    Fires a single headless call on the configured backend (run_headless) with
+    enrichment_prompt.md (plus resume/profiles/criteria when scoring is enabled)
+    and the job's title + cleaned description. Returns role_type / description_summary / tags
     plus the scoring fields (fit_score, criteria_score, dealbreakers, match_reason,
     and the derived match_score — all None/[] when scoring is disabled); on any
     failure returns role_type=None so the job is dropped downstream.
@@ -690,38 +904,13 @@ def enrich_one(job: dict) -> dict:
     desc = job.get("description_clean") or job.get("description_raw") or ""
     user_message = f"Job title: {title}\n\nJob description:\n{desc}"
 
-    system_prompt = build_enrich_system_prompt()
-    log_model_call("enrich", ENRICH_MODEL, system_prompt, user_message)
-
-    cmd = [
-        claude_executable(),
-        "--print",
-        "--model", ENRICH_MODEL,
-        "--exclude-dynamic-system-prompt-sections",
-        "--system-prompt", system_prompt,
-        "--output-format", "json",
-        user_message,
-    ]
-
-    try:
-        proc = subprocess.run(
-            cmd, cwd=str(BASE_DIR), capture_output=True, text=True,
-            timeout=SUBPROCESS_TIMEOUT_S, env=_NO_THINKING_ENV,
-        )
-        envelope = json.loads(proc.stdout)
-    except subprocess.TimeoutExpired:
-        print(f"  enrich TIMEOUT (> {SUBPROCESS_TIMEOUT_S}s) for "
-              f"{job.get('job_id')} — killed, dropping job", file=sys.stderr)
-        return dict(_ENRICH_FAILURE)
-    except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
-        print(f"  enrich failed for {job.get('job_id')}: {exc}", file=sys.stderr)
+    result = run_headless("enrich", build_enrich_system_prompt(), user_message)
+    if result is None:
+        print(f"  enrich failed for {job.get('job_id')} — dropping job",
+              file=sys.stderr)
         return dict(_ENRICH_FAILURE)
 
-    _add_usage(
-        envelope.get("usage", {}),
-        envelope.get("total_cost_usd", envelope.get("cost_usd", 0.0)),
-    )
-    parsed = _extract_json(envelope.get("result", ""))
+    parsed = _extract_json(result)
     fit_score = _clean_score(parsed.get("fit_score"))
     criteria_score = _clean_score(parsed.get("criteria_score"))
     dealbreakers = _clean_tags(parsed.get("dealbreakers"))
@@ -740,21 +929,37 @@ def enrich_one(job: dict) -> dict:
 def enrich_jobs(jobs: list[dict]) -> None:
     """Enrich each job in-place with role_type, summary, tags, and match scores.
 
-    One headless Sonnet call per job, run in parallel.
+    One headless Sonnet call per job, run in parallel. On the local backend, a
+    job whose enrich_one call fails outright gets one retry pass
+    (_retry_local_failures) before its result is applied — the local server's
+    occasional stalls are usually transient, so a second attempt often
+    succeeds instead of the job being dropped for nothing.
     """
-    print(f"Enriching {len(jobs)} jobs (parallel Sonnet calls, "
+    print(f"Enriching {len(jobs)} jobs (parallel calls, "
           f"scoring {'on' if scoring_enabled() else 'off'})...", flush=True)
     t0 = time.monotonic()
-    # Warm the Anthropic prompt cache with one serial call, then pause briefly
-    # before firing the parallel wave. Parallel calls that start simultaneously
-    # all miss the cache and each pays the cache WRITE for the large shared
-    # system prompt (resume + profiles). The sleep gives the cache write time
-    # to propagate so the parallel batch reads instead of re-writing.
-    results = [enrich_one(jobs[0])]
-    if len(jobs) > 1:
-        time.sleep(2)
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            results += list(pool.map(enrich_one, jobs[1:]))
+    config = load_config()
+    max_workers = config.max_workers
+    if config.llm_backend == "local":
+        # The local backend has no Anthropic prompt cache to warm, so the
+        # serial-first-call + sleep below would just add latency. Run the whole
+        # batch straight through the pool.
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(enrich_one, jobs))
+        _retry_local_failures(jobs, results, lambda r: r == _ENRICH_FAILURE,
+                              enrich_one, max_workers, "enrich")
+    else:
+        # Warm the Anthropic prompt cache with one serial call, then pause
+        # briefly before firing the parallel wave. Parallel calls that start
+        # simultaneously all miss the cache and each pays the cache WRITE for the
+        # large shared system prompt (resume + profiles). The sleep gives the
+        # cache write time to propagate so the parallel batch reads instead of
+        # re-writing.
+        results = [enrich_one(jobs[0])]
+        if len(jobs) > 1:
+            time.sleep(2)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                results += list(pool.map(enrich_one, jobs[1:]))
     for job, res in zip(jobs, results):
         job["role_type"] = res.get("role_type")
         job["description_summary"] = res.get("description_summary")

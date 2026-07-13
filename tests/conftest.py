@@ -25,6 +25,10 @@ dealbreaker_cap = 30.0
 [logging]
 dir = "logs"
 
+[llm]
+backend = "claude"
+max_workers = 2
+
 [[roles]]
 name = "Manager"
 definition = "the core of the job is leading or managing an engineering team"
