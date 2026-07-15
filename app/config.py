@@ -64,10 +64,15 @@ VALID_LLM_BACKENDS = ("claude", "local")
 # table sets one), and only response_format defaults to JSON mode, which a table
 # entry may still override.
 RESERVED_LOCAL_PARAM_KEYS = ("model", "messages", "stream")
-# Read timeout (seconds) for a local-LLM call when [llm.local] omits `timeout`.
-# Generous on purpose: a remote box running a 20B model can be much slower than
-# the Claude API.
-DEFAULT_LOCAL_TIMEOUT = 300.0
+# Read timeout (seconds) for a local-LLM clean/enrich call when [llm.local]
+# omits `timeout`. Deliberately tight: a warm local model answers a clean/enrich
+# call in well under a minute, so a call still running past this is a stall, not
+# slow progress — better to time out and let the one-shot retry try a fresh call
+# than to block the whole (sequential, at max_workers=1) pass on a wedged one.
+# The one call that legitimately needs to wait minutes — the cold model load —
+# is the run-start warm-up, which uses its own generous timeout (runner.py), not
+# this one.
+DEFAULT_LOCAL_TIMEOUT = 60.0
 
 
 @dataclass(frozen=True)

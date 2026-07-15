@@ -48,7 +48,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
@@ -138,6 +138,17 @@ def emit(**event) -> None:
     the parent process sees stage transitions live rather than at run end.
     """
     print(PROGRESS_SENTINEL + json.dumps(event), flush=True)
+
+
+def emit_log(msg: str, level: str = "info", index: int | None = None) -> None:
+    """Emit one line for the run drawer's scrolling event-log pane.
+
+    ``level`` drives the log line's color in the UI ("info", "good", "drop",
+    "head"); ``index`` optionally ties the line to a specific email group.
+    The web UI timestamps each line on receipt (see app/main.py::_apply_event)
+    rather than trusting a value from this subprocess, so no timestamp is sent.
+    """
+    emit(scope="log", msg=msg, level=level, index=index)
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +608,8 @@ def clean_one(job: dict) -> dict | None:
 
 
 def _retry_local_failures(jobs: list[dict], results: list, is_failure,
-                          one_fn, max_workers: int, label: str) -> None:
+                          one_fn, max_workers: int, label: str,
+                          index: int = 1) -> None:
     """Retry once, in place, the subset of `results` that `is_failure` flags.
 
     Local-only: the local backend is the flaky one (occasional generation
@@ -607,19 +619,28 @@ def _retry_local_failures(jobs: list[dict], results: list, is_failure,
     subset (parallel, same max_workers) and overwrites their slot in `results`
     with whatever the retry returns — success or a repeat failure, exactly one
     extra attempt, not a retry loop. A quiet no-op when nothing failed.
+
+    Surfaces the retry pass in the run drawer's event log (``index`` ties the
+    lines to the right per-email group) so a run that recovered a stalled call
+    reads honestly instead of looking like every job cleaned first try.
     """
     failed_idx = [i for i, r in enumerate(results) if is_failure(r)]
     if not failed_idx:
         return
     print(f"  retrying {len(failed_idx)} failed {label} call(s)...", flush=True)
+    emit_log(f"Retrying {len(failed_idx)} failed {label} call(s)…",
+             level="head", index=index)
     retry_jobs = [jobs[i] for i in failed_idx]
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         retry_results = list(pool.map(one_fn, retry_jobs))
     for i, res in zip(failed_idx, retry_results):
         results[i] = res
+    recovered = sum(1 for i in failed_idx if not is_failure(results[i]))
+    emit_log(f"Retry: {recovered}/{len(failed_idx)} {label} recovered",
+             level="good" if recovered == len(failed_idx) else "warn", index=index)
 
 
-def clean_jobs(jobs: list[dict]) -> None:
+def clean_jobs(jobs: list[dict], index: int = 1) -> None:
     """Clean descriptions in-place (parallel Haiku calls).
 
     Sets description_clean on each job. On the local backend, a job whose
@@ -627,20 +648,44 @@ def clean_jobs(jobs: list[dict]) -> None:
     falling back — the local server's occasional stalls are usually transient,
     so a second attempt often succeeds. Still falls back to description_raw if
     the retry also fails, so enrichment always has something to work with.
+
+    Runs the pool via submit()/as_completed() rather than pool.map() so a
+    "N of M" progress event can be emitted as each call finishes, driving the
+    run drawer's live count — ``index`` ties those events to the right
+    per-email group.
     """
     print(f"Cleaning {len(jobs)} descriptions (parallel calls)...", flush=True)
+    emit_log(f"Cleaning {len(jobs)} descriptions…", level="head", index=index)
     t0 = time.monotonic()
     config = load_config()
+    results: list[dict | None] = [None] * len(jobs)
+    done = 0
     with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
-        results = list(pool.map(clean_one, jobs))
+        futures = {pool.submit(clean_one, job): i for i, job in enumerate(jobs)}
+        for future in as_completed(futures):
+            i = futures[future]
+            results[i] = future.result()
+            done += 1
+            emit(scope="email", index=index, key="clean", status="active",
+                 stat=f"{done} of {len(jobs)}")
+            label = f"{jobs[i].get('title') or '?'} @ {jobs[i].get('company') or '?'}"
+            if results[i] is None:
+                emit_log(f"clean failed · {label} ({done}/{len(jobs)})",
+                         level="warn", index=index)
+            else:
+                emit_log(f"✓ cleaned {label} ({done}/{len(jobs)})",
+                         level="info", index=index)
     if config.llm_backend == "local":
         _retry_local_failures(jobs, results, lambda r: r is None, clean_one,
-                              config.max_workers, "clean")
+                              config.max_workers, "clean", index)
     for job, result in zip(jobs, results):
         job["description_clean"] = (
             (result or {}).get("description_clean") or job.get("description_raw") or ""
         )
-    print(f"Cleaning done in {time.monotonic() - t0:.0f}s", flush=True)
+    elapsed = time.monotonic() - t0
+    print(f"Cleaning done in {elapsed:.0f}s", flush=True)
+    emit_log(f"Cleaning done · {len(jobs)}/{len(jobs)} ({elapsed:.0f}s)",
+             level="good", index=index)
 
 
 # ---------------------------------------------------------------------------
@@ -756,6 +801,61 @@ def _verify_local_llm(config) -> None:
             f"list`), or pull it if it's missing (e.g. `ollama pull "
             f"{config.local_model}`)."
         )
+
+
+# The run-start warm-up absorbs the one-time cold model load. It gets its own
+# timeout and retry budget, independent of the (deliberately tight) per-call
+# [llm.local] timeout: WARMUP_TIMEOUT_S per attempt, WARMUP_ATTEMPTS attempts.
+# Loading a model into memory has been observed at ~1 min, so a ~1 min per-attempt
+# cap plus a couple of retries recovers a server that crashed on the first
+# request — without making a wedged server hang the run for many minutes (the
+# earlier 5-min-per-attempt cap did exactly that).
+WARMUP_TIMEOUT_S = 60
+WARMUP_ATTEMPTS = 3
+
+
+def _warm_local_llm(config) -> None:
+    """Fire one tiny generation so the local model loads before the timed passes.
+
+    The setup check (_verify_local_llm) only lists /models — it runs no
+    inference, so the first real clean call is otherwise where the model loads
+    into VRAM and warms its compute graph. That one-time cost can be minutes and
+    can even exceed the per-call timeout, making the first job time out and fall
+    back to its raw description (a silent quality loss). Sending a throwaway
+    max_tokens=1 completion here moves that cost to run start — before Pass 1 —
+    and retries it (WARMUP_ATTEMPTS attempts, WARMUP_TIMEOUT_S each), so a
+    first-request server hiccup (an observed failure mode: the first request
+    stalls or crashes the server) is absorbed here instead of costing a real
+    job. Failures are non-fatal: the real clean/enrich calls still retry and
+    fall back, so a warm-up problem never aborts the run. Only called on the
+    local backend.
+    """
+    url = config.local_base_url.rstrip("/") + "/chat/completions"
+    headers = {}
+    if config.local_api_key:
+        headers["Authorization"] = f"Bearer {config.local_api_key}"
+    payload = {
+        "model": config.local_model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+        "stream": False,
+    }
+    emit_log("Warming local model…", level="head")
+    t0 = time.monotonic()
+    for attempt in range(1, WARMUP_ATTEMPTS + 1):
+        try:
+            resp = httpx.post(url, json=payload, headers=headers,
+                              timeout=WARMUP_TIMEOUT_S)
+            resp.raise_for_status()
+            resp.json()
+            emit_log(f"Local model ready ({time.monotonic() - t0:.0f}s)",
+                     level="good")
+            return
+        except (httpx.HTTPError, ValueError) as exc:
+            print(f"  local model warm-up attempt {attempt} failed: {exc}",
+                  file=sys.stderr)
+    emit_log("Local model warm-up failed — continuing (calls will retry)",
+             level="warn")
 
 
 def scoring_enabled() -> bool:
@@ -926,7 +1026,34 @@ def enrich_one(job: dict) -> dict:
     }
 
 
-def enrich_jobs(jobs: list[dict]) -> None:
+def _emit_enrich_progress(index: int, done: int, total: int) -> None:
+    """Emit the "N of M" live-count event for one completed enrich_one call."""
+    emit(scope="email", index=index, key="enrich", status="active",
+         stat=f"{done} of {total}")
+
+
+def _log_enrich_outcome(job: dict, res: dict, index: int) -> None:
+    """Emit one event-log line describing a single job's enrichment outcome.
+
+    Distinguishes the three outcomes honestly: a scored keep, a genuine "Other"
+    drop, and an outright call failure (res == _ENRICH_FAILURE) — the last logs
+    as a warning rather than masquerading as an "Other" classification, since on
+    the local backend it may still be recovered by the retry pass.
+    """
+    label = f"{job.get('title') or '?'} @ {job.get('company') or '?'}"
+    if res == _ENRICH_FAILURE:
+        emit_log(f"enrich failed · {label}", level="warn", index=index)
+        return
+    role_type = res.get("role_type")
+    if role_type and role_type != "Other":
+        score = res.get("match_score")
+        score_txt = f" — {score}/100" if score is not None else ""
+        emit_log(f"✓ {label}{score_txt}", level="good", index=index)
+    else:
+        emit_log(f"✗ {label} — dropped (Other)", level="drop", index=index)
+
+
+def enrich_jobs(jobs: list[dict], index: int = 1) -> None:
     """Enrich each job in-place with role_type, summary, tags, and match scores.
 
     One headless Sonnet call per job, run in parallel. On the local backend, a
@@ -934,20 +1061,34 @@ def enrich_jobs(jobs: list[dict]) -> None:
     (_retry_local_failures) before its result is applied — the local server's
     occasional stalls are usually transient, so a second attempt often
     succeeds instead of the job being dropped for nothing.
+
+    Runs the pool via submit()/as_completed() rather than pool.map() so a
+    "N of M" progress event and a per-job outcome log line can be emitted as
+    each call finishes, driving the run drawer's live count and event log —
+    ``index`` ties those events to the right per-email group.
     """
     print(f"Enriching {len(jobs)} jobs (parallel calls, "
           f"scoring {'on' if scoring_enabled() else 'off'})...", flush=True)
+    emit_log(f"Enriching {len(jobs)} jobs…", level="head", index=index)
     t0 = time.monotonic()
     config = load_config()
     max_workers = config.max_workers
+    results: list[dict] = [None] * len(jobs)
+    done = 0
     if config.llm_backend == "local":
         # The local backend has no Anthropic prompt cache to warm, so the
         # serial-first-call + sleep below would just add latency. Run the whole
         # batch straight through the pool.
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            results = list(pool.map(enrich_one, jobs))
+            futures = {pool.submit(enrich_one, job): i for i, job in enumerate(jobs)}
+            for future in as_completed(futures):
+                i = futures[future]
+                results[i] = future.result()
+                done += 1
+                _emit_enrich_progress(index, done, len(jobs))
+                _log_enrich_outcome(jobs[i], results[i], index)
         _retry_local_failures(jobs, results, lambda r: r == _ENRICH_FAILURE,
-                              enrich_one, max_workers, "enrich")
+                              enrich_one, max_workers, "enrich", index)
     else:
         # Warm the Anthropic prompt cache with one serial call, then pause
         # briefly before firing the parallel wave. Parallel calls that start
@@ -955,11 +1096,21 @@ def enrich_jobs(jobs: list[dict]) -> None:
         # large shared system prompt (resume + profiles). The sleep gives the
         # cache write time to propagate so the parallel batch reads instead of
         # re-writing.
-        results = [enrich_one(jobs[0])]
+        results[0] = enrich_one(jobs[0])
+        done += 1
+        _emit_enrich_progress(index, done, len(jobs))
+        _log_enrich_outcome(jobs[0], results[0], index)
         if len(jobs) > 1:
             time.sleep(2)
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                results += list(pool.map(enrich_one, jobs[1:]))
+                futures = {pool.submit(enrich_one, job): i
+                           for i, job in enumerate(jobs[1:], start=1)}
+                for future in as_completed(futures):
+                    i = futures[future]
+                    results[i] = future.result()
+                    done += 1
+                    _emit_enrich_progress(index, done, len(jobs))
+                    _log_enrich_outcome(jobs[i], results[i], index)
     for job, res in zip(jobs, results):
         job["role_type"] = res.get("role_type")
         job["description_summary"] = res.get("description_summary")
@@ -969,7 +1120,11 @@ def enrich_jobs(jobs: list[dict]) -> None:
         job["dealbreakers"] = res.get("dealbreakers") or []
         job["match_reason"] = res.get("match_reason")
         job["match_score"] = res.get("match_score")
-    print(f"Enrichment done in {time.monotonic() - t0:.0f}s", flush=True)
+    elapsed = time.monotonic() - t0
+    kept = sum(1 for r in results if r.get("role_type") and r.get("role_type") != "Other")
+    print(f"Enrichment done in {elapsed:.0f}s", flush=True)
+    emit_log(f"Enrich done · {kept} kept, {len(jobs) - kept} dropped ({elapsed:.0f}s)",
+             level="good", index=index)
 
 
 # ---------------------------------------------------------------------------
@@ -1018,11 +1173,13 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
 """
 
     emit(scope="email", index=index, key="scrape", status="active")
+    emit_log("Scraping LinkedIn…", level="head", index=index)
     run_claude(SYSTEM_PROMPT_FILE, user_message)
 
     all_jobs = load_downloaded_jobs(scrape_run_id)
     scraped = len(all_jobs) if all_jobs else 0
     emit(scope="email", index=index, key="scrape", status="done", stat=f"{scraped} scraped")
+    emit_log(f"Scraped {scraped} jobs", level="good", index=index)
 
     if all_jobs is None:
         msg = (
@@ -1049,6 +1206,8 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
     survivors = apply_deterministic_filters(all_jobs, existing)
     emit(scope="email", index=index, key="filter", status="done",
          stat=f"{len(survivors)} of {len(all_jobs)} kept")
+    emit_log(f"Filter: {len(survivors)} of {len(all_jobs)} kept",
+             level="info", index=index)
 
     print(f"{len(all_jobs)} scraped; {len(survivors)} survive deterministic "
           f"filters (already-in-DB / applied / closed / excluded companies).")
@@ -1058,13 +1217,13 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
 
     # Description cleaning: strip EEO boilerplate / benefits tail before Sonnet.
     emit(scope="email", index=index, key="clean", status="active")
-    clean_jobs(survivors)
+    clean_jobs(survivors, index)
     emit(scope="email", index=index, key="clean", status="done",
          stat=f"{len(survivors)} cleaned")
 
     # Per-job enrichment: role_type (configured roles / Other) + tags + scoring.
     emit(scope="email", index=index, key="enrich", status="active")
-    enrich_jobs(survivors)
+    enrich_jobs(survivors, index)
 
     # Keep only the configured role types; drop Other (and any that failed to enrich).
     role_names = {role.name for role in load_roles()}
@@ -1125,6 +1284,8 @@ def process_url(
     result = save_jobs(run_id, jobs)
     emit(scope="email", index=index, key="save", status="done",
          stat=f"{result['saved']} saved, {result['reposts_detected']} reposts")
+    emit_log(f"Saved {result['saved']} jobs · {result['reposts_detected']} reposts",
+             level="good", index=index)
     print(f"\nSave result: {result}")
     logging.getLogger("scout").info(
         "Scrape run %s: %d saved, %d reposts", run_id,
@@ -1183,6 +1344,24 @@ def main() -> None:
     log.info("Run started (source=%s, model call logging %s)",
              "manual URL" if args.url else "gmail",
              "on" if _log_model_calls else "off")
+
+    # Tell the drawer which backend/models are driving this run. Pass 1 (the
+    # browser scrape) always runs on Claude even when Pass 2/3 are local.
+    config = load_config()
+    is_local = config.llm_backend == "local"
+    models = {
+        "scrape": SCRAPER_MODEL,
+        "clean": config.local_model if is_local else CLEAN_MODEL,
+        "enrich": config.local_model if is_local else ENRICH_MODEL,
+    }
+    emit(scope="meta", backend=config.llm_backend, models=models)
+    emit_log(f"Run started · backend={config.llm_backend}", level="head")
+
+    # Load/warm the local model now (before Pass 1) rather than letting the
+    # first clean call eat the multi-minute cold start — see _warm_local_llm.
+    if is_local:
+        _warm_local_llm(config)
+
     emit(scope="global", key="start", status="done")
 
     if args.url:
@@ -1212,8 +1391,12 @@ def main() -> None:
     subjects = [(e.get("subject") or "(no subject)")[:80] for e in emails]
     emit(scope="global", key="gmail", status="done",
          stat=f"{len(emails)} email{'s' if len(emails) != 1 else ''}", emails=subjects)
+    emit_log(f"Gmail: {len(emails)} email{'s' if len(emails) != 1 else ''} matched "
+             f"label “{config.gmail_label}”", level="info")
 
     for i, email in enumerate(emails, 1):
+        emit_log(f"Email {i}/{len(emails)}: {email.get('subject') or '(no subject)'}",
+                 level="head", index=i)
         process_email(email, index=i, total=len(emails))
 
     log.info("Run finished (%d email%s)", len(emails), "s" if len(emails) != 1 else "")

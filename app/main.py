@@ -48,6 +48,9 @@ EMAIL_STEPS = [
     ("save", "Writing to storage"),
 ]
 
+# Max lines kept in the run drawer's event-log pane (oldest lines drop off).
+RUN_LOG_MAXLEN = 200
+
 # In-memory run state (single-user local app — no need for DB persistence here).
 # Structured so the drawer can render per-step / per-email progress live.
 _run: dict = {
@@ -57,8 +60,11 @@ _run: dict = {
     "gmail_auth_required": False,
     "started_at": None,
     "finished_at": None,
+    "backend": None,
+    "models": {},
     "global_steps": [],
     "emails": [],
+    "log": [],
 }
 _run_lock = threading.Lock()
 
@@ -76,11 +82,15 @@ def _init_run_state() -> None:
         "gmail_auth_required": False,
         "started_at": datetime.now(timezone.utc),
         "finished_at": None,
+        "backend": None,
+        "models": {},
         "global_steps": [
-            {"key": k, "label": l, "status": "pending", "stat": None}
+            {"key": k, "label": l, "status": "pending", "stat": None,
+             "started_at": None, "elapsed": None}
             for k, l in GLOBAL_STEPS
         ],
         "emails": [],
+        "log": [],
     })
     _run["global_steps"][0]["status"] = "active"
 
@@ -97,16 +107,28 @@ def _email_group(index: int, total: int = 1, subject: str = "") -> dict:
         "total": total,
         "subject": subject,
         "steps": [
-            {"key": k, "label": l, "status": "pending", "stat": None}
+            {"key": k, "label": l, "status": "pending", "stat": None,
+             "started_at": None, "elapsed": None}
             for k, l in EMAIL_STEPS
         ],
     }
 
 
 def _update_step(step: dict, ev: dict) -> None:
-    """Apply an event's status/stat to a single step in place."""
-    if ev.get("status"):
-        step["status"] = ev["status"]
+    """Apply an event's status/stat to a single step in place.
+
+    Tracks ``started_at`` the first time a step goes active (repeat "active"
+    events — e.g. live N-of-M progress during clean/enrich — don't reset it)
+    and freezes ``elapsed`` once the step leaves the active state, so the
+    drawer can show a live timer while running and a fixed duration after.
+    """
+    status = ev.get("status")
+    if status:
+        if status == "active" and step["status"] != "active":
+            step["started_at"] = datetime.now(timezone.utc)
+        elif status != "active" and step.get("started_at") and step.get("elapsed") is None:
+            step["elapsed"] = int((datetime.now(timezone.utc) - step["started_at"]).total_seconds())
+        step["status"] = status
     if "stat" in ev:
         step["stat"] = ev["stat"]
 
@@ -114,7 +136,21 @@ def _update_step(step: dict, ev: dict) -> None:
 def _apply_event(ev: dict) -> None:
     """Fold one SCOUT_PROGRESS event from the runner into _run."""
     scope = ev.get("scope")
-    if scope == "global":
+    if scope == "meta":
+        _run["backend"] = ev.get("backend")
+        _run["models"] = ev.get("models") or {}
+    elif scope == "log":
+        elapsed = 0
+        if _run["started_at"]:
+            elapsed = int((datetime.now(timezone.utc) - _run["started_at"]).total_seconds())
+        _run["log"].append({
+            "ts": elapsed,
+            "level": ev.get("level", "info"),
+            "msg": ev.get("msg", ""),
+        })
+        if len(_run["log"]) > RUN_LOG_MAXLEN:
+            _run["log"] = _run["log"][-RUN_LOG_MAXLEN:]
+    elif scope == "global":
         step = _find_step(_run["global_steps"], ev.get("key"))
         if step:
             _update_step(step, ev)
@@ -139,15 +175,24 @@ def _apply_event(ev: dict) -> None:
 
 
 def _mark_active_as_error(msg: str) -> None:
-    """Flip the currently active step (if any) to error with a short message."""
+    """Flip the currently active step (if any) to error with a short message.
+
+    Freezes ``elapsed`` too, same as _update_step, so a timed-out/crashed
+    run's per-step timer stops instead of ticking forever in a closed drawer.
+    """
+    def _fail(step: dict) -> None:
+        step["status"], step["stat"] = "error", msg
+        if step.get("started_at") and step.get("elapsed") is None:
+            step["elapsed"] = int((datetime.now(timezone.utc) - step["started_at"]).total_seconds())
+
     for step in _run["global_steps"]:
         if step["status"] == "active":
-            step["status"], step["stat"] = "error", msg
+            _fail(step)
             return
     for grp in _run["emails"]:
         for step in grp["steps"]:
             if step["status"] == "active":
-                step["status"], step["stat"] = "error", msg
+                _fail(step)
                 return
 
 
@@ -166,7 +211,11 @@ def _nav_state() -> dict:
     if _run["error"]:
         return {"text": "Run failed", "cls": "error", "title": _run["error"]}
     if _run["done"]:
-        t = _run["finished_at"].strftime("%H:%M") if _run["finished_at"] else ""
+        # finished_at is stored in UTC (datetime.now(timezone.utc)); astimezone()
+        # with no args converts an aware datetime to the system's local zone, so
+        # the drawer shows the wall-clock time the user actually finished at.
+        t = (_run["finished_at"].astimezone().strftime("%H:%M")
+             if _run["finished_at"] else "")
         return {"text": f"Done — {t}", "cls": "done", "title": ""}
     return {"text": "Idle", "cls": "idle", "title": ""}
 
@@ -387,11 +436,36 @@ async def companies() -> list[dict]:
     return [{"company": name, "count": count} for name, count in rows]
 
 
+def _finalize_snapshot(snapshot: dict, now: datetime) -> None:
+    """Compute this render's live elapsed seconds for the header and any active step.
+
+    Called on a deep-copied snapshot (never the live _run) so per-render timer
+    math never races the background run thread. Steps already marked done/error
+    keep their frozen ``elapsed`` from _update_step.
+    """
+    if snapshot["started_at"]:
+        end = snapshot["finished_at"] or now
+        snapshot["run_elapsed"] = int((end - snapshot["started_at"]).total_seconds())
+    else:
+        snapshot["run_elapsed"] = 0
+
+    def _finalize_step(step: dict) -> None:
+        if step["status"] == "active" and step.get("started_at"):
+            step["elapsed"] = int((now - step["started_at"]).total_seconds())
+
+    for step in snapshot["global_steps"]:
+        _finalize_step(step)
+    for group in snapshot["emails"]:
+        for step in group["steps"]:
+            _finalize_step(step)
+
+
 def _render_drawer(request: Request) -> HTMLResponse:
     """Render the run drawer partial from a snapshot of the current run state."""
     with _run_lock:
         snapshot = copy.deepcopy(_run)
         nav = _nav_state()
+    _finalize_snapshot(snapshot, datetime.now(timezone.utc))
     return templates.TemplateResponse(
         request,
         "partials/run_drawer.html",
