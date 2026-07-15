@@ -208,8 +208,9 @@
 
   <!-- ================= Run drawer (slide-over) ================= -->
   <aside id="run-drawer"
-         class="fixed top-0 right-0 h-full w-96 max-w-[90vw] bg-white dark:bg-[#0E1426] border-l border-stone-200 dark:border-edge shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-30 overflow-y-auto">
+         class="fixed top-0 right-0 h-full w-[640px] max-w-[95vw] bg-white dark:bg-[#0E1426] border-l border-stone-200 dark:border-edge shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-30 flex flex-col">
     <div id="run-status"
+         class="flex flex-col min-h-0 grow"
          hx-get="/scout/status"
          hx-trigger="load"
          hx-swap="outerHTML">

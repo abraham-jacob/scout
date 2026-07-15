@@ -29,8 +29,11 @@
   {% endif %}
 {% endmacro %}
 
-{# ----- one step row (marker + label + optional stat) ----- #}
-{% macro step_row(step) %}
+{# ----- format a duration in seconds as "Ns" or "M:SS" ----- #}
+{% macro duration(seconds) %}{% if seconds is not none %}{% if seconds < 60 %}{{ seconds }}s{% else %}{{ (seconds // 60) }}:{{ '%02d' % (seconds % 60) }}{% endif %}{% endif %}{% endmacro %}
+
+{# ----- one step row: marker + label + optional model pill + stat/timer ----- #}
+{% macro step_row(step, model) %}
 <div class="flex items-center gap-3 py-1.5">
   <span class="shrink-0 w-5 h-5 flex items-center justify-center">{{ marker(step.status) }}</span>
   <span class="text-sm {{ 'text-rose-600 dark:text-rose-300' if step.status == 'error'
@@ -38,9 +41,15 @@
                                 else 'text-slate-400 dark:text-slate-500') }}">
     {{ step.label }}
   </span>
-  {% if step.stat %}
-  <span class="ml-auto text-xs text-slate-400 tabular-nums">{{ step.stat }}</span>
+  {% if model %}
+  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-100 dark:bg-white/5 text-slate-500 dark:text-slate-400 ring-1 ring-inset ring-stone-200 dark:ring-white/10">{{ model }}</span>
   {% endif %}
+  <span class="ml-auto flex items-center gap-3 text-xs">
+    {% if step.stat %}<span class="text-slate-400 dark:text-slate-500 tabular-nums">{{ step.stat }}</span>{% endif %}
+    {% if step.elapsed is not none %}
+    <span class="font-mono tabular-nums {{ 'text-orange-500 dark:text-indigo-300' if step.status == 'active' else 'text-slate-300 dark:text-slate-600' }}">{{ duration(step.elapsed) }}</span>
+    {% endif %}
+  </span>
 </div>
 {% endmacro %}
 
@@ -60,25 +69,39 @@
 
 {# ----- drawer body (self-replacing; polls while running) ----- #}
 <div id="run-status"
+     class="flex flex-col min-h-0 grow"
      data-running="{{ 'true' if run.running else 'false' }}"
      {% if run.running %}hx-get="/scout/status" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
 
-  <div class="flex items-center justify-between px-5 py-4 border-b border-stone-200 dark:border-edge">
-    <h2 class="text-slate-900 dark:text-white font-bold dark:font-semibold">Scout Run</h2>
-    <button onclick="closeDrawer()" class="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors" aria-label="Close">
-      <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
-      </svg>
-    </button>
+  <div class="flex items-center justify-between px-5 py-4 border-b border-stone-200 dark:border-edge shrink-0">
+    <div class="leading-tight">
+      <h2 class="text-slate-900 dark:text-white font-bold dark:font-semibold">Scout Run</h2>
+      {% if run.backend %}
+      <div class="text-[11px] flex items-center gap-1.5 mt-0.5">
+        <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-1 dark:ring-inset dark:ring-violet-400/30">{{ run.backend }}</span>
+        {% if run.models.enrich %}<span class="font-mono text-slate-500 dark:text-slate-400">{{ run.models.enrich }}</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="flex items-center gap-3">
+      {% if run.running %}
+      <span class="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums">{{ duration(run.run_elapsed) }}</span>
+      {% endif %}
+      <button onclick="closeDrawer()" class="text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
   </div>
 
-  <div class="px-5 py-4">
+  <div class="px-5 py-4 overflow-y-auto min-h-0" style="flex: 1 1 50%;">
     {% if not run.global_steps and not run.emails %}
     <p class="text-sm text-slate-400 dark:text-slate-500">No run yet. Click “Run Scout” to start.</p>
     {% endif %}
 
     {% for step in run.global_steps %}
-      {{ step_row(step) }}
+      {{ step_row(step, None) }}
     {% endfor %}
 
     {% for group in run.emails %}
@@ -88,15 +111,43 @@
       </div>
       <div class="pl-1">
         {% for step in group.steps %}
-          {{ step_row(step) }}
+          {{ step_row(step, run.models.get(step.key) if run.models else None) }}
         {% endfor %}
       </div>
     </div>
     {% endfor %}
   </div>
 
+  {% if run.log %}
+  <div class="flex items-center gap-2 px-5 py-2 border-t border-stone-200 dark:border-edge bg-stone-50 dark:bg-ink/40 shrink-0">
+    <svg class="w-3.5 h-3.5 text-slate-400" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>
+    <span class="text-[11px] uppercase tracking-wider font-bold text-slate-400 dark:text-slate-500">Event log</span>
+  </div>
+  <div id="run-log-pane" class="overflow-y-auto min-h-0 px-5 py-3 bg-stone-50 dark:bg-ink/60 font-mono text-[12px] leading-relaxed"
+       style="flex: 1 1 50%;">
+    {% for line in run.log %}
+    <div class="flex gap-2">
+      <span class="text-slate-300 dark:text-slate-600 shrink-0">{{ duration(line.ts) }}</span>
+      <span class="{{ {
+        'info': 'text-slate-500 dark:text-slate-400',
+        'good': 'text-emerald-600 dark:text-emerald-300',
+        'warn': 'text-amber-600 dark:text-amber-300',
+        'drop': 'text-slate-400 dark:text-slate-500',
+        'head': 'text-blue-600 dark:text-blue-400 font-medium',
+      }.get(line.level, 'text-slate-500 dark:text-slate-400') }}">{{ line.msg }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <script>
+    (function () {
+      var pane = document.getElementById('run-log-pane');
+      if (pane) { pane.scrollTop = pane.scrollHeight; }
+    })();
+  </script>
+  {% endif %}
+
   {% if run.gmail_auth_required %}
-  <div class="mx-5 mb-4 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 p-3">
+  <div class="mx-5 my-4 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 p-3 shrink-0">
     <p class="text-sm text-amber-700 dark:text-amber-300 font-medium mb-1">Gmail authentication expired</p>
     <p class="text-xs text-amber-600/90 dark:text-amber-200/70 mb-3">Your Google token has expired or been revoked. Click below — a browser tab will open for Google sign-in.</p>
     <button hx-post="/auth/gmail/reauth"
@@ -107,14 +158,14 @@
     </button>
   </div>
   {% elif run.error %}
-  <div class="mx-5 mb-4 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 p-3">
+  <div class="mx-5 my-4 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 p-3 shrink-0">
     <p class="text-sm text-rose-700 dark:text-rose-300 font-medium mb-1">Run failed</p>
     <pre class="text-xs text-rose-600/80 dark:text-rose-200/80 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{{ run.error }}</pre>
   </div>
   {% endif %}
 
   {% if not run.running and (run.done or run.error) %}
-  <div class="px-5 pb-5 flex justify-end">
+  <div class="px-5 py-4 flex justify-end shrink-0 border-t border-stone-200 dark:border-edge">
     <button onclick="closeDrawer()"
             class="bg-slate-900 hover:bg-slate-700 dark:bg-indigo-500 dark:hover:bg-indigo-400 text-white text-sm font-bold dark:font-semibold px-5 py-2 rounded-xl dark:rounded-lg transition-colors">
       {{ 'OK' if run.done else 'Close' }}
