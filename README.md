@@ -1,7 +1,11 @@
+<div align="center">
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner_dark.svg">
-  <img src="docs/images/banner_light.svg" alt="Scout — AI agent for LinkedIn job hunting" height="110">
+  <img src="docs/images/banner_light.svg" alt="Scout — AI agent for LinkedIn job hunting" height="170">
 </picture>
+
+</div>
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-251%20passing-brightgreen.svg)](#-testing--evals)
