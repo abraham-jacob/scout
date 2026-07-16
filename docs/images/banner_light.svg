@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="140" viewBox="0 0 620 140">
+  <defs>
+    <linearGradient id="iconGradLight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="10" width="120" height="120" rx="28" fill="url(#iconGradLight)"/>
+  <circle cx="50" cy="60" r="26" fill="none" stroke="#FFFFFF" stroke-width="9"/>
+  <line x1="69" y1="79" x2="92" y2="102" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round"/>
+  <text x="146" y="90" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="800" letter-spacing="-2" fill="#0B0F1D">Scout</text>
+  <text x="148" y="118" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#64748B">AI agent for LinkedIn job hunting</text>
+</svg>
