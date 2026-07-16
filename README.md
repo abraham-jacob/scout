@@ -64,37 +64,42 @@ The run drawer streams the whole pipeline live — per-pass timers, live progres
 ### 🔍 Easily sort and filter
 Filter by role type, application status (including the full interview pipeline — Recruiter → Technical → Offer/Rejected), unseen-only, or company name with autocomplete search. Sort by newest or best match.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/images/feature_sort_filter.gif -->
+<img src="docs/images/feature_sort_filter.png" alt="Filter bar: role, status, sort, unseen-only, and company search" width="100%">
 
 ### 🗂️ Informative job cards
 Every card surfaces what matters at a glance — title, company, location, salary range, and how it was posted (new vs. repost) — with the full original description one click away.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/images/feature_job_cards.gif -->
+<img src="docs/images/feature_job_card.png" alt="A full job card with title, match score, tags, summary, and apply links" width="100%">
 
 ### 📝 Description summarization
 No more scrolling past boilerplate. Every job gets a clean 2–4 sentence summary of the actual role, generated after the noise (EEO statements, benefits marketing, "About the Company" filler) is stripped out.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/images/feature_summary.gif -->
+<img src="docs/images/feature_description_summary.png" alt="A boilerplate-free, 2-4 sentence job summary" width="100%">
 
 ### 🏷️ Tagging
 Each job is tagged with the details you'd otherwise dig for — workplace type, salary band, tech stack, team size, seniority — so you can scan a card instead of reading it.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/images/feature_tags.gif -->
+<img src="docs/images/feature_tagging.png" alt="Tag chips for role type, salary, workplace, seniority, and tech stack" width="100%">
 
 ### 🎯 Job match score
 Every job is scored 0–100 against your resume, an optional per-role profile, and your hard criteria — with dealbreakers (like an unacceptable commute or on-site requirement) capping the score regardless of how good the rest of the fit is.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/images/feature_match_score.gif -->
+<img src="docs/images/feature_job_match_score.png" alt="A job title with its computed match-score badge" width="100%">
 
 ### 📌 Application pipeline tracking
 Move a job through New → Saved → Applied → Interviewing (Recruiter/Technical) → Offer/Rejected right from its card. The status filter understands the whole pipeline, not just exact matches.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/images/feature_pipeline.gif -->
+<img src="docs/images/feature_track_jobs.png" alt="The status dropdown showing every pipeline stage from New to Dismissed" width="100%">
 
 ### 🔗 Direct apply links
 Every card links straight to the fastest path to apply — the company's own site or Easy Apply — plus the original LinkedIn listing, with LinkedIn's safety-redirect wrapper unwrapped so the link goes where it says it does.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/images/feature_apply_links.gif -->
+<img src="docs/images/feature_links_to_apply.png" alt="Apply on company site and LinkedIn links on a job card" width="100%">
+
+### 🖥️ Use Claude, or bring your own local LLM
+Run the description-cleaning and enrichment passes on the Claude API for best-in-class quality, or point them at any OpenAI-compatible local server (Ollama, etc.) for a fully free, fully private run — no job description ever leaves your machine. Switch backends with one line in `profiles/config.toml`; the run drawer always shows exactly which backend and model did the work.
+
+<img src="docs/images/feature_backend_toggle.gif" alt="The run drawer's backend badge switching between Claude and a local model" width="100%">
 
 ## 📋 Requirements
 
