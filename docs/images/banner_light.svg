@@ -1,13 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="620" height="140" viewBox="0 0 620 140">
-  <defs>
-    <linearGradient id="iconGradLight" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#6366F1"/>
-      <stop offset="100%" stop-color="#7C3AED"/>
-    </linearGradient>
-  </defs>
-  <rect x="0" y="10" width="120" height="120" rx="28" fill="url(#iconGradLight)"/>
-  <circle cx="50" cy="60" r="26" fill="none" stroke="#FFFFFF" stroke-width="9"/>
-  <line x1="69" y1="79" x2="92" y2="102" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round"/>
-  <text x="146" y="90" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="800" letter-spacing="-2" fill="#0B0F1D">Scout</text>
-  <text x="148" y="118" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#64748B">AI agent for LinkedIn job hunting</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="417.1" height="150" viewBox="0 0 417.1 150">
+  <text x="0" y="93" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="800" letter-spacing="-2" fill="#12233F">Scout</text>
+  <text x="1" y="121" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#5B6B85">AI agent for LinkedIn job hunting</text>
+  <polygon points="323.35,43.71 323.35,72.86 359.04,51.75 417.11,86.44 416.85,69.85 358.79,5.0" fill="#81BBDF"/>
+  <polygon points="364.07,83.67 416.85,115.59 416.85,92.97 382.92,72.61" fill="#3D7DB1"/>
+  <polygon points="377.39,69.34 358.54,58.03 323.1,79.65 323.1,102.02" fill="#3D7DB1"/>
+  <polygon points="363.82,112.83 416.85,145.0 416.6,121.88 382.67,101.52" fill="#1A3C63"/>
+  <polygon points="317.82,50.24 304.0,67.08 304.0,142.74 377.14,98.5 358.54,87.19 318.08,110.31" fill="#265484"/>
 </svg>
