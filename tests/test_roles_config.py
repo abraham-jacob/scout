@@ -436,12 +436,19 @@ class TestValidateSetup:
     """Test the fail-fast setup validation at pipeline start."""
 
     def _setup(self, tmp_path, monkeypatch, resume=True):
-        """Point runner at tmp_path profiles, optionally creating resume.md."""
+        """Point runner at tmp_path profiles, optionally creating resume.md.
+
+        Also stubs claude_executable() so these tests exercise the
+        resume/profile/local-backend checks in isolation, independent of
+        whether the `claude` CLI happens to be installed on the machine
+        running the suite (it won't be in CI).
+        """
         monkeypatch.setattr(runner, "PROFILES_DIR", tmp_path)
         resume_file = tmp_path / "resume.md"
         if resume:
             resume_file.write_text("RESUME")
         monkeypatch.setattr(runner, "RESUME_FILE", resume_file)
+        monkeypatch.setattr(runner, "claude_executable", lambda: "/usr/bin/claude")
 
     def test_ok_with_resume_and_roleless_profiles(self, tmp_path, monkeypatch):
         """Resume present + roles without profile files -> no exit."""
