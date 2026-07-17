@@ -59,8 +59,11 @@ flowchart LR
 Scout is three LLM passes with cheap deterministic filtering in between, orchestrated by [`agent/runner.py`](agent/runner.py):
 
 1. **Pass 1 — Browser scrape.** A Claude Haiku sub-agent drives your real Chrome session (via the [Claude in Chrome](https://claude.com/chrome) extension) to LinkedIn and pulls every job on the alert's first page through LinkedIn's internal Voyager API — title, company, full description, apply URL, applied status, and whether the posting is still live. No card-clicking, no screen-scraping heuristics, no missed virtualized cards.
+
 2. **Deterministic filters.** Before spending another token, Scout drops jobs that are already in the database, already applied to, closed, or from companies you've excluded. Filtering is free; LLM calls aren't.
+
 3. **Pass 2 — Clean.** One parallel LLM call per surviving job strips EEO statements, benefits marketing, and "About the Company" filler out of the raw description. What remains is the actual role.
+
 4. **Pass 3 — Enrich & score.** One parallel LLM call per job classifies it into one of *your* configured role types (or drops it as `Other`), writes a 2–4 sentence summary, tags it (workplace, salary, stack, team size…), and scores it against your resume, per-role profile, and hard criteria — with dealbreakers capping the score. Results land in DuckDB; the web UI serves them with filtering, search, and an application-status pipeline.
 
 The run drawer streams the whole pipeline live — per-pass timers, live progress counts, which model is doing what, and a scrolling event log of every job's outcome:
