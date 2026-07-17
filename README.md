@@ -8,7 +8,9 @@
 </div>
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-251%20passing-brightgreen.svg)](#-testing--evals)
+[![Tests](https://github.com/abraham-jacob/scout/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/abraham-jacob/scout/actions/workflows/tests.yml)
+[![Coverage](https://raw.githubusercontent.com/abraham-jacob/scout/badges/coverage.svg)](https://github.com/abraham-jacob/scout/actions/workflows/tests.yml)
+[![Branch protection: enabled](https://img.shields.io/badge/branch%20protection-enabled-blue.svg)](https://github.com/abraham-jacob/scout/branches)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 [![Claude](https://img.shields.io/badge/built%20with-Claude-d97757.svg)](https://claude.com/claude-code)
 
@@ -242,8 +244,13 @@ The parts of this project that were genuinely interesting to build:
 ## 🧪 Testing & Evals
 
 ```bash
-pipenv run pytest              # 251 tests, unit + integration markers
+pipenv run unit-tests          # full suite, JUnit XML + branch coverage on agent/ and app/
+pipenv run pytest              # same suite, no coverage — faster for local iteration
+pipenv run pytest -m unit      # unit tests only
+pipenv run pytest -m integration   # integration tests only
 ```
+
+`pipenv run unit-tests` is what CI runs on every push and pull request (see the badges above) — use it before opening a PR. Coverage output goes to `htmlcov/` (open `htmlcov/index.html`) and `junit_xml_test_report.xml`; both are git-ignored.
 
 The prompts are tested too: [`scripts/clean_prompt_test.py`](scripts/clean_prompt_test.py) and [`scripts/enrich_prompt_test.py`](scripts/enrich_prompt_test.py) run the real prompts against captured job descriptions and use an LLM-as-judge to score output quality — the harness that drove several rounds of prompt fixes (workplace-fabrication and either/or-requirement bugs among them).
 

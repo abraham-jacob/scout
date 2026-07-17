@@ -140,6 +140,12 @@ tool-definition path is available but not on the main flow.
 
 - **Never work on the `main` branch directly.** Always create a feature branch
   (`git checkout -b <branch-name>`) before making changes. PRs merge into `main`.
+  `main` is branch-protected on GitHub (PR required, force-push and deletion
+  blocked), so a direct push would be rejected anyway.
+- **CI runs on every push and PR** via [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
+  (`pipenv run unit-tests` — tests + branch coverage). Run it locally before
+  opening a PR rather than relying on CI to catch failures. On push to `main`
+  it also regenerates the coverage badge onto the unprotected `badges` branch.
 - **Every Python function must have a docstring** — this is a hard project rule; the
   codebase follows it uniformly.
 - Claude model IDs are pinned as constants in `runner.py` (`SCRAPER_MODEL` and

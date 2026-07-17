@@ -307,8 +307,9 @@ class TestCompaniesRoute:
 class TestScoutRunRoute:
     """Test POST /scout/run route."""
 
+    @patch('app.main.check_setup')
     @patch('app.main._start_run_background')
-    def test_trigger_run_with_url(self, mock_start, client, reset_run_state):
+    def test_trigger_run_with_url(self, mock_start, mock_check_setup, client, reset_run_state):
         """POST /scout/run triggers a background run with URL."""
         response = client.post("/scout/run", data={"url": "https://linkedin.com/jobs"})
 
@@ -318,8 +319,9 @@ class TestScoutRunRoute:
         call_args = mock_start.call_args[0]
         assert call_args[0] == "https://linkedin.com/jobs"
 
+    @patch('app.main.check_setup')
     @patch('app.main._start_run_background')
-    def test_trigger_run_log_model_calls(self, mock_start, client, reset_run_state):
+    def test_trigger_run_log_model_calls(self, mock_start, mock_check_setup, client, reset_run_state):
         """The 'Log LLM calls' checkbox is forwarded to the background runner."""
         response = client.post("/scout/run", data={"log_model_calls": "true"})
 
@@ -327,8 +329,9 @@ class TestScoutRunRoute:
         mock_start.assert_called_once()
         assert mock_start.call_args[0] == (None, True)
 
+    @patch('app.main.check_setup')
     @patch('app.main._start_run_background')
-    def test_trigger_run_default_no_model_logging(self, mock_start, client, reset_run_state):
+    def test_trigger_run_default_no_model_logging(self, mock_start, mock_check_setup, client, reset_run_state):
         """Without the checkbox, model-call logging stays off."""
         response = client.post("/scout/run", data={})
 
@@ -348,8 +351,9 @@ class TestScoutRunRoute:
         # Should not start another run
         mock_start.assert_not_called()
 
+    @patch('app.main.check_setup')
     @patch('app.main._start_run_background')
-    def test_trigger_run_without_url(self, mock_start, client, reset_run_state):
+    def test_trigger_run_without_url(self, mock_start, mock_check_setup, client, reset_run_state):
         """POST /scout/run without URL (reads Gmail)."""
         response = client.post("/scout/run", data={})
 
