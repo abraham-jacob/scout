@@ -1,0 +1,71 @@
+name: Tests
+
+# Runs the full test suite (with coverage) on every push to main and on every
+# PR targeting main. The "Tests" badge in README.md reads this workflow's
+# status directly, so it's always accurate — no manual updates needed.
+#
+# On push to main only, also regenerates the coverage badge and publishes it
+# to the unprotected `badges` branch (README.md's coverage badge points at a
+# fixed raw-content URL on that branch, so the badge itself never needs
+# touching — only its target file changes).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - name: Install dependencies
+        run: pipenv install --dev --deploy
+
+      - name: Run tests with coverage
+        run: pipenv run unit-tests
+
+      - name: Compute coverage percentage
+        id: coverage
+        run: |
+          PCT=$(pipenv run coverage json -o /dev/stdout --pretty-print=false \
+            | python3 -c "import json,sys; print(f\"{json.load(sys.stdin)['totals']['percent_covered']:.0f}\")")
+          echo "percent=$PCT" >> "$GITHUB_OUTPUT"
+
+      - name: Generate coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p badge-output
+          PCT="${{ steps.coverage.outputs.percent }}"
+          if [ "$PCT" -ge 90 ]; then COLOR=brightgreen
+          elif [ "$PCT" -ge 75 ]; then COLOR=green
+          elif [ "$PCT" -ge 60 ]; then COLOR=yellow
+          else COLOR=red
+          fi
+          curl -sf "https://img.shields.io/badge/coverage-${PCT}%25-${COLOR}" -o badge-output/coverage.svg
+
+      - name: Publish coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./badge-output
+          publish_branch: badges
+          keep_files: false
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_message: "Update coverage badge"

@@ -22,6 +22,11 @@ doesn't have to reverse-engineer them from the diff history.
 blocked, and the branch can't be deleted. There is no situation where you
 should push directly to `main`.
 
+Every push and every PR against `main` automatically runs the test suite via
+[GitHub Actions](.github/workflows/tests.yml) — that's the "Tests" and
+"Coverage" badges at the top of the README. A PR with a failing run is
+visible immediately in the PR's checks tab.
+
 1. **Branch from `main`.** Never commit on `main` directly.
    ```bash
    git checkout main && git pull
@@ -29,7 +34,8 @@ should push directly to `main`.
    ```
 2. **Make focused commits.** Prefer several small, well-scoped commits over one
    giant one — it makes review (and future `git blame`) much easier.
-3. **Run the test suite before opening a PR** (see below).
+3. **Run the test suite locally before opening a PR** (see below) — don't
+   rely on CI to catch something you could've caught in ten seconds.
 4. **Open a PR against `main`.** Describe *why* the change is needed, not just
    what changed — the diff already shows the what.
 5. **Keep the PR focused.** One logical change per PR. If you notice something
@@ -72,12 +78,18 @@ non-pipeline change (e.g. the web UI, database layer, or config parsing).
 ## Testing
 
 ```bash
-pipenv run pytest                                    # full suite
+pipenv run unit-tests                                # full suite, JUnit XML + branch coverage — same as CI
+pipenv run pytest                                    # full suite, no coverage — faster for iteration
 pipenv run pytest tests/test_agent_runner.py          # one file
 pipenv run pytest tests/test_agent_runner.py::TestName::test_case
 pipenv run pytest -m unit                              # unit tests only
 pipenv run pytest -m integration                       # integration tests only
 ```
+
+Use `pipenv run unit-tests` before opening a PR — it's exactly what CI runs,
+so a clean local run means a clean CI run. Coverage output lands in
+`htmlcov/` (open `htmlcov/index.html` in a browser) and
+`junit_xml_test_report.xml`; both are git-ignored, generated fresh each run.
 
 - New behavior needs a test. Bug fixes should include a regression test that
   fails before the fix and passes after.
