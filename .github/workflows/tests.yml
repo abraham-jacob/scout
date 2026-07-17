@@ -42,7 +42,7 @@ jobs:
       - name: Compute coverage percentage
         id: coverage
         run: |
-          PCT=$(pipenv run coverage json -o /dev/stdout --pretty-print=false \
+          PCT=$(pipenv run coverage json -o /dev/stdout \
             | python3 -c "import json,sys; print(f\"{json.load(sys.stdin)['totals']['percent_covered']:.0f}\")")
           echo "percent=$PCT" >> "$GITHUB_OUTPUT"
 
