@@ -35,9 +35,13 @@ Everything runs on your machine. Your resume, your criteria, and your job-search
 - [⚠️ Limitations & Responsible Use](#-limitations--responsible-use)
 - [📄 License](#-license)
 
+<br>
+
 ## 🎯 Why I Built This
 
 I built Scout during my own job search. Every morning started with a stack of LinkedIn alert emails, and every posting meant the same ritual: open it, scroll past three paragraphs of EEO boilerplate, figure out if it's a real match, check whether I'd already seen it last week under a different posting ID. After a few weeks I realized I was doing the same mechanical classification task hundreds of times — which is exactly the kind of task you should hand to an agent. So I did.
+
+<br>
 
 ## 🧠 How It Works
 
@@ -62,6 +66,8 @@ Scout is three LLM passes with cheap deterministic filtering in between, orchest
 The run drawer streams the whole pipeline live — per-pass timers, live progress counts, which model is doing what, and a scrolling event log of every job's outcome:
 
 <img src="docs/images/run_drawer.gif" alt="Live run drawer: three passes with timers, progress counts, and a streaming event log" width="100%">
+
+<br>
 
 ## ✨ Features
 
@@ -105,6 +111,8 @@ Run the description-cleaning and enrichment passes on the Claude API for best-in
 
 <img src="docs/images/feature_backend_toggle.gif" alt="The run drawer's backend badge switching between Claude and a local model" width="100%">
 
+<br>
+
 ## 📋 Requirements
 
 Scout is a personal, single-user tool. It expects:
@@ -117,6 +125,8 @@ Scout is a personal, single-user tool. It expects:
 | **A Gmail account** receiving LinkedIn job-alert emails, plus a Google Cloud OAuth client (`credentials.json`) with the Gmail API enabled | Scout reads the alert emails to find the job URLs |
 | **A LinkedIn account** logged into Chrome | The scrape runs inside your own session |
 | *(Optional)* An OpenAI-compatible local server ([Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on a local model: free and private |
+
+<br>
 
 ## ⚡ Quick Start
 
@@ -175,6 +185,8 @@ pipenv run python -m agent.runner                   # process unread alert email
 pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one URL, skip Gmail
 ```
 
+<br>
+
 ## 🖥️ Local LLM Backend
 
 Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any OpenAI-compatible server instead of the Claude API. Pass 1 always runs on Claude, because it's an agentic browser task a local text model can't do.
@@ -198,6 +210,8 @@ reasoning_effort = "medium"
 
 The local path is built for imperfect hardware: Scout fires a warm-up request at run start so the model loads *before* the timed passes (with its own generous timeout and retries), keeps per-call timeouts tight so a stalled generation fails fast, and gives every failed call one parallel retry pass before falling back gracefully. Setup validation pings the server and verifies the model id before any browser work starts.
 
+<br>
+
 ## ⚙️ Configuration Reference
 
 All user configuration lives in `profiles/config.toml`, validated loudly at startup — no hidden defaults, so a typo can't silently change behavior.
@@ -213,6 +227,8 @@ All user configuration lives in `profiles/config.toml`, validated loudly at star
 | `[llm.local]` | when local | Server URL, model, API key, timeout, per-pass params |
 | `[scrape]` | optional | Browser download folder (defaults to `~/Downloads`) |
 
+<br>
+
 ## 🔧 Engineering Notes
 
 The parts of this project that were genuinely interesting to build:
@@ -227,6 +243,8 @@ The parts of this project that were genuinely interesting to build:
 
 **Failing loudly, recovering quietly.** Config validation raises on the first problem instead of defaulting; setup checks verify the Claude CLI, resume, profile files, and local-LLM reachability before any browser work starts; each subprocess has a hard wall-clock kill; local-LLM calls get tight timeouts, one retry pass, and graceful fallbacks (a job that fails cleaning proceeds with its raw description rather than being dropped).
 
+<br>
+
 ## 🧪 Testing & Evals
 
 ```bash
@@ -235,15 +253,21 @@ pipenv run pytest              # 251 tests, unit + integration markers
 
 The prompts are tested too: [`scripts/clean_prompt_test.py`](scripts/clean_prompt_test.py) and [`scripts/enrich_prompt_test.py`](scripts/enrich_prompt_test.py) run the real prompts against captured job descriptions and use an LLM-as-judge to score output quality — the harness that drove several rounds of prompt fixes (workplace-fabrication and either/or-requirement bugs among them).
 
+<br>
+
 ## 💰 Costs
 
 With the Claude backend, a run costs what the models cost: Haiku for the scrape and clean passes, Sonnet only for enrichment, prompt caching on, and the exact token usage and dollar cost printed at the end of every run. With the local backend, Passes 2–3 are free — Pass 1's Haiku scrape is the only API spend.
+
+<br>
 
 ## ⚠️ Limitations & Responsible Use
 
 - **Personal use, by design.** Scout automates *your own* browsing of *your own* job alerts, in *your own* logged-in Chrome session — one page of results per alert email, no crawling, no scale. Automated access may still conflict with LinkedIn's Terms of Service; understand them and use your judgment. This project is not affiliated with LinkedIn.
 - **Single-user, local-only.** The web UI has no authentication and binds to localhost; run state lives in memory. Don't expose it to a network.
 - **The browser is busy during Pass 1.** The scrape drives a real Chrome tab; grab a coffee — the run drawer will tell you exactly what's happening.
+
+<br>
 
 ## 📄 License
 
