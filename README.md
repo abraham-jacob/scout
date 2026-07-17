@@ -45,16 +45,7 @@ I built Scout during my own job search. Every morning started with a stack of Li
 
 ## 🧠 How It Works
 
-```mermaid
-flowchart LR
-    G[/"Gmail<br/>job-alert emails"/] --> R{{"agent/runner.py<br/>orchestrator"}}
-    R --> P1["Pass 1 · Browser scrape<br/><i>Claude Haiku + Chrome</i><br/>Voyager API → every job on page 1"]
-    P1 --> F["Deterministic filters<br/><i>no LLM cost</i><br/>dupes · applied · closed · excluded"]
-    F --> P2["Pass 2 · Clean<br/><i>Haiku or local LLM, parallel</i><br/>strip boilerplate from descriptions"]
-    P2 --> P3["Pass 3 · Enrich<br/><i>Sonnet or local LLM, parallel</i><br/>classify · summarize · tag · score"]
-    P3 --> DB[("DuckDB")]
-    DB --> UI["FastAPI + HTMX web UI"]
-```
+<img src="docs/images/architecture.gif" alt="Scout architecture: Gmail and LinkedIn capture, three-pass AI processing (clean, filter, enrich), DuckDB storage, and the FastAPI + HTMX UI" width="100%">
 
 Scout is three LLM passes with cheap deterministic filtering in between, orchestrated by [`agent/runner.py`](agent/runner.py):
 
