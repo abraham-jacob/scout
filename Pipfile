@@ -4,17 +4,17 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-fastapi = "*"
-uvicorn = {extras = ["standard"], version = "*"}
-duckdb = "*"
-python-dotenv = "*"
-google-auth = "*"
-google-auth-oauthlib = "*"
-google-api-python-client = "*"
-anthropic = "*"
-jinja2 = "*"
-python-multipart = "*"
-httpx = "*"
+fastapi = "~=0.139"
+uvicorn = {extras = ["standard"], version = "~=0.51"}
+duckdb = "~=1.5"
+python-dotenv = "~=1.2"
+google-auth = "~=2.56"
+google-auth-oauthlib = "~=1.4"
+google-api-python-client = "~=2.198"
+anthropic = "~=0.117"
+jinja2 = "~=3.1"
+python-multipart = "~=0.0"
+httpx = "~=0.28"
 
 [dev-packages]
 pytest = "*"

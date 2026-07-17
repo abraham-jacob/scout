@@ -1,6 +1,7 @@
 .idea/
 credentials.json
 token.json
+Pipfile.lock
 .env
 __pycache__/
 *.pyc
