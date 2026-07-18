@@ -13,6 +13,7 @@ logs/
 /htmlcov/
 /junit_xml_test_report.xml
 .coverage
+/site/
 mockups/
 # Personal match-scoring artifacts (never commit)
 profiles/*
