@@ -119,6 +119,7 @@ Scout is a personal, single-user tool. It expects:
 | Requirement | Why |
 |---|---|
 | **Python 3.12** + [pipenv](https://pipenv.pypa.io/) | Runtime & dependency management |
+| **Git** | To clone the repo |
 | **Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
 | **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at a local model |
 | **A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |

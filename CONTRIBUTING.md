@@ -51,7 +51,7 @@ pipenv install --dev
 
 You'll need your own `profiles/config.toml`, `profiles/resume.md`, Gmail OAuth
 credentials, and a logged-in Chrome/LinkedIn session to run the app
-end-to-end — see the [Getting Started guide](https://abraham-jacob.github.io/scout/getting-started/).
+end-to-end — see the [Configuration guide](https://abraham-jacob.github.io/scout/getting-started/).
 None of that is required just to read the code, run the test suite, or work
 on a non-pipeline change (e.g. the web UI, database layer, or config
 parsing).

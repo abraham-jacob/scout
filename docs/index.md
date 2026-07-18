@@ -14,9 +14,8 @@ I built Scout during my own job search. Every morning started with a stack of Li
 
 ## Where to go next
 
-- **[Getting Started](getting-started.md)** — requirements and the full setup walkthrough
+- **[Configuration](getting-started.md)** — requirements, setup walkthrough, and the full `config.toml`/scoring-file reference
 - **[Using the Web UI](web-ui.md)** — filtering, job cards, match scores, the application pipeline
-- **[Configuration](configuration.md)** — the full `config.toml` and scoring-file reference
 - **[Local LLM Backend](local-llm.md)** — run Passes 2–3 on a free, fully local model
 - **[Architecture](architecture.md)** — how the three-pass pipeline actually works
 - **[Contributing](contributing.md)** — conventions for working on Scout itself

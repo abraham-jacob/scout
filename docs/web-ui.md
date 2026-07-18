@@ -51,7 +51,7 @@ instead of reading it.
 Every job is scored 0–100 against your resume, an optional per-role
 profile, and your hard criteria — with dealbreakers (like an unacceptable
 commute or on-site requirement) capping the score regardless of how good the
-rest of the fit is. See [Configuration](configuration.md) for how to define
+rest of the fit is. See [Configuration](getting-started.md) for how to define
 dealbreakers.
 
 ![A job title with its computed match-score badge](images/feature_job_match_score.png)

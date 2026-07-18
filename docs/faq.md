@@ -16,7 +16,7 @@ serving the exact `[llm.local] model` id you configured, before any browser
 work starts — so this fails fast rather than mid-run. The error message
 prints the model ids the server actually reports; copy one of those verbatim
 into `model`, including the tag (e.g. `scout-enrich:latest`, not
-`scout-enrich`). See [Configuration](configuration.md) for the full field
+`scout-enrich`). See [Configuration](getting-started.md) for the full field
 reference.
 
 ## A job I expected got classified `Other` and dropped
@@ -26,7 +26,7 @@ classified `Other` and dropped rather than saved with a meaningless role.
 Tighten or broaden the `definition` field for the role you expected the job
 to match — it's the classification guidance handed to the enrichment model,
 so specificity there (example titles, explicit exclusions) directly controls
-what gets kept. See [`[[roles]]`](configuration.md) in the config reference.
+what gets kept. See [`[[roles]]`](getting-started.md) in the config reference.
 
 ## Is my data private?
 

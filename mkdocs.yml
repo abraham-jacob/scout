@@ -7,6 +7,9 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -19,11 +22,15 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.tabs
-    - navigation.sections
     - navigation.top
+    - navigation.indexes
+    - navigation.footer
     - content.code.copy
     - content.action.edit
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
@@ -39,9 +46,8 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
+  - Configuration: getting-started.md
   - Using the Web UI: web-ui.md
-  - Configuration: configuration.md
   - Local LLM Backend: local-llm.md
   - Architecture: architecture.md
   - Contributing: contributing.md

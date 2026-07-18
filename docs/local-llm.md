@@ -21,7 +21,7 @@ reasoning_effort = "low"        # merged verbatim into the API call
 reasoning_effort = "medium"
 ```
 
-See the [`[llm.local]` reference](configuration.md) for the full field
+See the [`[llm.local]` reference](getting-started.md) for the full field
 reference, including the required vs. optional keys and what happens if
 `model` doesn't match what the server reports.
 
