@@ -248,6 +248,39 @@
       runWasActive = running;
     });
 
+    // --- Run drawer pane auto-scroll ---
+    // The drawer's two scrollable panes (run progress, event log) each have an
+    // "Auto scroll" checkbox. The checkboxes are hx-preserve'd in
+    // run_drawer.html so their checked state survives the 1s poll's outerHTML
+    // swap of #run-status; these listeners live here (outside that swapped
+    // fragment) so they're registered exactly once, not re-added every poll.
+    // Scroll position is captured just before each swap and, per pane,
+    // either pinned to the bottom (auto-scroll on) or restored to where it
+    // was (auto-scroll off) after — otherwise a fresh outerHTML swap would
+    // silently reset every pane to the top each second.
+    const AUTOSCROLL_PANES = [
+      { paneId: 'run-steps-pane', toggleId: 'autoscroll-steps' },
+      { paneId: 'run-log-pane', toggleId: 'autoscroll-log' },
+    ];
+    let pendingScrollTops = {};
+    document.body.addEventListener('htmx:beforeSwap', function (e) {
+      if (!e.target || e.target.id !== 'run-status') return;
+      AUTOSCROLL_PANES.forEach(({ paneId }) => {
+        const pane = document.getElementById(paneId);
+        if (pane) pendingScrollTops[paneId] = pane.scrollTop;
+      });
+    });
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      if (!e.target || e.target.id !== 'run-status') return;
+      AUTOSCROLL_PANES.forEach(({ paneId, toggleId }) => {
+        const pane = document.getElementById(paneId);
+        if (!pane) return;
+        const toggle = document.getElementById(toggleId);
+        const autoScroll = toggle ? toggle.checked : true;
+        pane.scrollTop = autoScroll ? pane.scrollHeight : (pendingScrollTops[paneId] || 0);
+      });
+    });
+
     // --- Filters ---
     // Active/inactive class sets cover both themes; dark: variants win when html.dark is set.
     const FILTER_ACTIVE = ['bg-white', 'text-slate-900', 'shadow-sm', 'font-bold',

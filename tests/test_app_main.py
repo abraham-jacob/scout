@@ -354,7 +354,7 @@ class TestScoutRunRoute:
     @patch('app.main.check_setup')
     @patch('app.main._start_run_background')
     def test_trigger_run_without_url(self, mock_start, mock_check_setup, client, reset_run_state):
-        """POST /scout/run without URL (reads Gmail)."""
+        """POST /scout/run without URL (loops configured linkedin_searches)."""
         response = client.post("/scout/run", data={})
 
         assert response.status_code == 200
@@ -397,6 +397,19 @@ class TestRunStatusRoute:
         assert "Connection timeout" in response.text
         with _run_lock:
             assert _run["error"] == "Connection timeout"
+
+    def test_run_status_shows_search_name_not_raw_url(self, client, reset_run_state):
+        """The drawer's group heading shows the configured search's alias, not its URL."""
+        from app.main import _search_group
+        with _run_lock:
+            _run["running"] = True
+            _run["searches"] = [_search_group(1, 1, "Senior IC Bay Area")]
+
+        response = client.get("/scout/status")
+
+        assert response.status_code == 200
+        assert "Senior IC Bay Area" in response.text
+        assert "linkedin.com" not in response.text
 
 
 class TestUpdateStatusRoute:
@@ -629,80 +642,16 @@ class TestRouteIntegration:
         assert response.status_code == 200
 
 
-class TestGmailAuthRequired:
-    """Test Gmail auth-required flag and reauth endpoint."""
+class TestRunErrorDisplay:
+    """Test the run drawer's error box rendering."""
 
-    def test_apply_event_sets_gmail_auth_required(self, reset_run_state):
-        """An event with auth_required=True sets the flag on _run."""
-        from app.main import _apply_event, _init_run_state
+    def test_run_status_shows_error_box(self, client, reset_run_state):
+        """GET /scout/status renders the red error box when _run['error'] is set."""
         with _run_lock:
-            _init_run_state()
-            _apply_event({
-                "scope": "global",
-                "key": "gmail",
-                "status": "error",
-                "stat": "auth expired",
-                "auth_required": True,
-            })
-            assert _run["gmail_auth_required"] is True
-
-    def test_apply_event_without_auth_required_leaves_flag_false(self, reset_run_state):
-        """Normal events don't set gmail_auth_required."""
-        from app.main import _apply_event, _init_run_state
-        with _run_lock:
-            _init_run_state()
-            _apply_event({"scope": "global", "key": "gmail", "status": "done",
-                          "stat": "1 email", "emails": ["Job alerts"]})
-            assert _run["gmail_auth_required"] is False
-
-    def test_run_status_shows_reauth_button_when_auth_required(
-        self, client, reset_run_state
-    ):
-        """GET /scout/status renders the amber reauth box (not the red error box) on auth failure."""
-        with _run_lock:
-            _run["gmail_auth_required"] = True
-            _run["error"] = "Gmail token expired"
-
-        response = client.get("/scout/status")
-
-        assert response.status_code == 200
-        assert "Reauthenticate with Gmail" in response.text
-        # amber box is shown; the red error pre block is NOT (auth_required takes the elif branch)
-        assert "bg-rose-50" not in response.text
-
-    def test_run_status_shows_error_box_without_auth_flag(self, client, reset_run_state):
-        """Generic red error box shown when gmail_auth_required is False."""
-        with _run_lock:
-            _run["gmail_auth_required"] = False
-            _run["error"] = "Something else went wrong"
+            _run["error"] = "Something went wrong"
 
         response = client.get("/scout/status")
 
         assert response.status_code == 200
         assert "bg-rose-50" in response.text
-        assert "Something else went wrong" in response.text
-        assert "Reauthenticate with Gmail" not in response.text
-
-    def test_gmail_reauth_success(self, client):
-        """POST /auth/gmail/reauth returns success message when auth completes."""
-        with patch("app.gmail.TOKEN_FILE") as mock_token, \
-             patch("app.gmail.get_gmail_service") as mock_auth:
-            mock_token.unlink = MagicMock()
-            mock_auth.return_value = MagicMock()
-
-            response = client.post("/auth/gmail/reauth")
-
-        assert response.status_code == 200
-        assert "Authenticated" in response.text
-
-    def test_gmail_reauth_failure(self, client):
-        """POST /auth/gmail/reauth returns error message when auth fails."""
-        with patch("app.gmail.TOKEN_FILE") as mock_token, \
-             patch("app.gmail.get_gmail_service") as mock_auth:
-            mock_token.unlink = MagicMock()
-            mock_auth.side_effect = Exception("access_denied")
-
-            response = client.post("/auth/gmail/reauth")
-
-        assert response.status_code == 200
-        assert "Reauth failed" in response.text
+        assert "Something went wrong" in response.text

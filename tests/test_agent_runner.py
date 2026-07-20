@@ -1,6 +1,7 @@
 """Tests for agent/runner.py — scrape orchestration and enrichment."""
 
 import json
+import re
 import types
 import httpx
 import pytest
@@ -322,34 +323,6 @@ class TestApplyDeterministicFilters:
         assert all("job_id" in job for job in result)
 
 
-class TestGmailAuthError:
-    """Test runner behaviour when Gmail token is expired."""
-
-    def test_refresh_error_emits_auth_required(self, capsys, monkeypatch):
-        """RefreshError from get_job_alert_emails emits auth_required and exits 1."""
-        import sys
-        from google.auth.exceptions import RefreshError
-        import agent.runner as runner
-
-        def _raise(**_kw):
-            raise RefreshError("invalid_grant: Token has been expired or revoked.")
-
-        monkeypatch.setattr(sys, "argv", ["runner"])
-        monkeypatch.setattr(runner, "validate_setup", lambda: None)
-        monkeypatch.setattr(runner, "setup_logging",
-                            lambda: __import__("logging").getLogger("scout"))
-        monkeypatch.setattr(runner, "init_db", lambda: None)
-        monkeypatch.setattr(runner, "get_job_alert_emails", _raise)
-
-        with pytest.raises(SystemExit) as exc_info:
-            runner.main()
-
-        assert exc_info.value.code == 1
-        out = capsys.readouterr().out
-        assert '"auth_required": true' in out
-        assert '"status": "error"' in out
-
-
 class TestClaudeExecutable:
     """Test cross-platform resolution of the claude CLI (C)."""
 
@@ -516,6 +489,46 @@ def _fake_config(**overrides):
     return types.SimpleNamespace(**base)
 
 
+class _FakeStreamResponse:
+    """Minimal stand-in for the context-managed Response httpx.stream() yields."""
+
+    def __init__(self, lines):
+        self._lines = lines
+
+    def raise_for_status(self):
+        pass
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def _sse_lines(content_pieces=(), usage=None, reasoning_pieces=()):
+    """Build fake `data: ...` SSE lines matching Ollama's streaming shape.
+
+    Reasoning pieces are emitted first (as delta.reasoning, empty delta.content
+    — confirmed via a live curl test against Ollama not to be mixed into the
+    real content), then content pieces (delta.content), then one final chunk
+    with empty choices and the usage object (when stream_options.include_usage
+    is set), then the [DONE] sentinel.
+    """
+    lines = []
+    for r in reasoning_pieces:
+        lines.append("data: " + json.dumps(
+            {"choices": [{"delta": {"content": "", "reasoning": r}}]}))
+    for c in content_pieces:
+        lines.append("data: " + json.dumps({"choices": [{"delta": {"content": c}}]}))
+    if usage is not None:
+        lines.append("data: " + json.dumps({"choices": [], "usage": usage}))
+    lines.append("data: [DONE]")
+    return lines
+
+
 class TestRunHeadlessBackend:
     """Test the Pass 2/3 backend dispatcher (run_headless)."""
 
@@ -538,27 +551,26 @@ class TestRunHeadlessBackend:
         assert seen["model"] == runner.ENRICH_MODEL
 
     def test_local_backend_posts_and_maps_usage(self, monkeypatch):
-        """backend=local POSTs to the server and maps OpenAI usage at zero cost."""
+        """backend=local streams from the server and maps OpenAI usage at zero cost."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
             llm_backend="local", local_base_url="http://box:11434/v1",
             local_model="gpt-oss:20b", local_api_key="k", local_timeout=42.0))
 
         captured = {}
 
-        def _fake_post(url, json=None, headers=None, timeout=None):
+        def _fake_stream(method, url, json=None, headers=None, timeout=None):
+            captured["method"] = method
             captured["url"] = url
             captured["json"] = json
             captured["headers"] = headers
             captured["timeout"] = timeout
-            return Mock(
-                raise_for_status=lambda: None,
-                json=lambda: {
-                    "choices": [{"message": {"content": '{"description_clean": "x"}'}}],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 4},
-                },
-            )
+            return _FakeStreamResponse(_sse_lines(
+                content_pieces=['{"description_clean"', ': "x"}'],
+                usage={"prompt_tokens": 11, "completion_tokens": 4},
+                reasoning_pieces=["thinking…"],
+            ))
 
-        monkeypatch.setattr(runner.httpx, "post", _fake_post)
+        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
 
         from agent.runner import _tokens, _tokens_lock
         with _tokens_lock:
@@ -567,8 +579,11 @@ class TestRunHeadlessBackend:
         result = run_headless("clean", "sys", "usr")
 
         assert result == '{"description_clean": "x"}'
+        assert captured["method"] == "POST"
         assert captured["url"] == "http://box:11434/v1/chat/completions"
         assert captured["json"]["model"] == "gpt-oss:20b"
+        assert captured["json"]["stream"] is True
+        assert captured["json"]["stream_options"] == {"include_usage": True}
         assert captured["json"]["messages"][0]["role"] == "system"
         assert captured["headers"]["Authorization"] == "Bearer k"
         assert captured["timeout"] == 42.0
@@ -584,52 +599,70 @@ class TestRunHeadlessBackend:
             local_model="m", local_api_key=None, local_timeout=5.0))
         captured = {}
 
-        def _fake_post(url, json=None, headers=None, timeout=None):
+        def _fake_stream(method, url, json=None, headers=None, timeout=None):
             captured["headers"] = headers
-            return Mock(raise_for_status=lambda: None,
-                        json=lambda: {"choices": [{"message": {"content": "{}"}}],
-                                      "usage": {}})
+            return _FakeStreamResponse(_sse_lines(content_pieces=["{}"], usage={}))
 
-        monkeypatch.setattr(runner.httpx, "post", _fake_post)
+        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
         run_headless("enrich", "sys", "usr")
         assert "Authorization" not in captured["headers"]
 
     def test_local_backend_http_error_returns_none(self, monkeypatch):
-        """A network/HTTP failure returns None so the caller falls back."""
+        """A network/HTTP failure exhausts all retries and returns None."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
             llm_backend="local", local_base_url="http://box:11434/v1",
             local_model="m", local_api_key=None, local_timeout=5.0))
+        slept = []
+        monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
 
         def _boom(*a, **k):
             raise httpx.ConnectError("refused")
 
-        monkeypatch.setattr(runner.httpx, "post", _boom)
+        monkeypatch.setattr(runner.httpx, "stream", _boom)
         assert run_headless("clean", "sys", "usr") is None
+        # Retried LOCAL_STREAM_RETRIES times, sleeping between attempts (not after the last).
+        assert slept == [runner.LOCAL_STREAM_RETRY_DELAY_S] * (runner.LOCAL_STREAM_RETRIES - 1)
+
+    def test_local_backend_http_error_recovers_on_retry(self, monkeypatch):
+        """A stream that fails once then succeeds is not treated as a failure."""
+        monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
+            llm_backend="local", local_base_url="http://box:11434/v1",
+            local_model="m", local_api_key=None, local_timeout=5.0))
+        monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+        calls = {"n": 0}
+
+        def _fake_stream(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ReadTimeout("stalled")
+            return _FakeStreamResponse(_sse_lines(content_pieces=["{}"], usage={}))
+
+        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
+        assert run_headless("clean", "sys", "usr") == "{}"
+        assert calls["n"] == 2
 
     def test_local_backend_malformed_response_returns_none(self, monkeypatch):
-        """A response missing choices/message returns None, not a crash."""
+        """A stream with no content chunks at all returns None, not a crash."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
             llm_backend="local", local_base_url="http://box:11434/v1",
             local_model="m", local_api_key=None, local_timeout=5.0))
 
-        def _fake_post(*a, **k):
-            return Mock(raise_for_status=lambda: None, json=lambda: {"unexpected": True})
+        def _fake_stream(*a, **k):
+            return _FakeStreamResponse(["data: [DONE]"])
 
-        monkeypatch.setattr(runner.httpx, "post", _fake_post)
+        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
         assert run_headless("enrich", "sys", "usr") is None
 
     def _capture_payload(self, monkeypatch, config):
-        """Run one local call under `config` and return the POSTed JSON payload."""
+        """Run one local call under `config` and return the streamed JSON payload."""
         monkeypatch.setattr(runner, "load_config", lambda: config)
         captured = {}
 
-        def _fake_post(url, json=None, headers=None, timeout=None):
+        def _fake_stream(method, url, json=None, headers=None, timeout=None):
             captured["json"] = json
-            return Mock(raise_for_status=lambda: None,
-                        json=lambda: {"choices": [{"message": {"content": "{}"}}],
-                                      "usage": {}})
+            return _FakeStreamResponse(_sse_lines(content_pieces=["{}"], usage={}))
 
-        monkeypatch.setattr(runner.httpx, "post", _fake_post)
+        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
         return captured
 
     def test_local_per_pass_params_merged(self, monkeypatch):
@@ -650,19 +683,20 @@ class TestRunHeadlessBackend:
         assert "temperature" not in captured["json"]
 
     def test_local_params_cannot_clobber_owned_fields(self, monkeypatch):
-        """model/messages/stream are re-asserted even if a param table sets them.
+        """model/messages/stream/stream_options are re-asserted even if a param
+        table sets them.
 
         config validation rejects those keys, but the merge order guards against
         them defensively too.
         """
         config = _fake_config(
             llm_backend="local", local_base_url="http://box/v1", local_model="m",
-            local_clean_params={"model": "evil", "stream": True})
+            local_clean_params={"model": "evil", "stream": False})
         captured = self._capture_payload(monkeypatch, config)
 
         run_headless("clean", "sys", "usr")
         assert captured["json"]["model"] == "m"
-        assert captured["json"]["stream"] is False
+        assert captured["json"]["stream"] is True
 
 
 class TestEnrichJobsWarmup:
@@ -693,6 +727,48 @@ class TestEnrichJobsWarmup:
 
         runner.enrich_jobs([{"job_id": "1"}, {"job_id": "2"}])
         assert slept == [2]
+
+
+class TestWarmUpCleanPass:
+    """Test the realistically-sized local-model warm-up clean call."""
+
+    def test_succeeds_first_attempt_no_sleep(self, monkeypatch):
+        """A successful first clean_one call returns immediately, no sleep."""
+        monkeypatch.setattr(runner, "clean_one", lambda job: {"description_clean": "x"})
+        slept = []
+        monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
+
+        runner._warm_up_clean_pass(_fake_config(llm_backend="local"))
+        assert slept == []
+
+    def test_recovers_on_retry(self, monkeypatch):
+        """Failing the first two attempts then succeeding sleeps twice and returns."""
+        calls = {"n": 0}
+
+        def fake_clean_one(job):
+            calls["n"] += 1
+            return None if calls["n"] < 3 else {"description_clean": "x"}
+
+        monkeypatch.setattr(runner, "clean_one", fake_clean_one)
+        slept = []
+        monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
+
+        runner._warm_up_clean_pass(_fake_config(llm_backend="local"))
+        assert calls["n"] == 3
+        assert slept == [runner.WARMUP_CLEAN_RETRY_DELAY_S, runner.WARMUP_CLEAN_RETRY_DELAY_S]
+
+    def test_aborts_run_when_every_attempt_fails(self, monkeypatch):
+        """Every attempt failing aborts the run via sys.exit(1), not a silent continue."""
+        monkeypatch.setattr(runner, "clean_one", lambda job: None)
+        slept = []
+        monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
+
+        with pytest.raises(SystemExit) as exc_info:
+            runner._warm_up_clean_pass(_fake_config(llm_backend="local"))
+
+        assert exc_info.value.code == 1
+        # No sleep after the final (3rd) failed attempt.
+        assert slept == [runner.WARMUP_CLEAN_RETRY_DELAY_S, runner.WARMUP_CLEAN_RETRY_DELAY_S]
 
 
 class TestRetryLocalFailures:
@@ -783,6 +859,28 @@ class TestCleanJobsRetry:
         assert jobs[0]["description_clean"] == "raw text"
         assert calls["n"] == 1
 
+    def test_event_log_reports_per_call_duration(self, capsys, monkeypatch):
+        """Each clean event-log line reports that job's own call duration."""
+        monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
+
+        def slow_clean_one(job):
+            time.sleep(0.05)
+            return {"description_clean": "ok"} if job["job_id"] == "ok" else None
+
+        monkeypatch.setattr(runner, "clean_one", slow_clean_one)
+        jobs = [{"job_id": "ok", "description_raw": "raw"},
+                {"job_id": "bad", "description_raw": "raw"}]
+
+        runner.clean_jobs(jobs)
+        msgs = [
+            json.loads(line[len(runner.PROGRESS_SENTINEL):])["msg"]
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith(runner.PROGRESS_SENTINEL)
+            and json.loads(line[len(runner.PROGRESS_SENTINEL):]).get("scope") == "log"
+        ]
+        assert any(re.search(r"✓ cleaned .*\ds", m) for m in msgs)
+        assert any(re.search(r"clean failed .*\ds", m) for m in msgs)
+
 
 class TestEnrichJobsRetry:
     """Test the local-only one-shot retry for Pass 3 enrich failures."""
@@ -842,3 +940,50 @@ class TestEnrichJobsRetry:
 
         runner.enrich_jobs(jobs)
         assert calls["n"] == 2
+
+
+class TestMainSearchLoop:
+    """Test main()'s loop over profiles/config.toml [[linkedin_searches]] entries."""
+
+    def _run_main(self, monkeypatch, searches):
+        """Run main() with setup/IO stubbed and process_url recording its calls."""
+        import sys
+        monkeypatch.setattr(sys, "argv", ["runner"])
+        monkeypatch.setattr(runner, "validate_setup", lambda: None)
+        monkeypatch.setattr(runner, "setup_logging",
+                            lambda: __import__("logging").getLogger("scout"))
+        monkeypatch.setattr(runner, "init_db", lambda: None)
+        monkeypatch.setattr(runner, "load_config",
+                            lambda: _fake_config(linkedin_searches=searches))
+        calls = []
+        monkeypatch.setattr(runner, "process_url",
+                            lambda **kw: calls.append(kw) or True)
+        runner.main()
+        return calls
+
+    def test_loops_once_per_configured_search_in_order(self, monkeypatch):
+        """Each configured search is scraped once, in file order, with its name as the label."""
+        searches = [
+            types.SimpleNamespace(name="First", url="https://www.linkedin.com/jobs/a"),
+            types.SimpleNamespace(name="Second", url="https://www.linkedin.com/jobs/b"),
+        ]
+        calls = self._run_main(monkeypatch, searches)
+
+        assert len(calls) == 2
+        assert calls[0]["url"] == "https://www.linkedin.com/jobs/a"
+        assert calls[0]["search_name"] == "First"
+        assert calls[0]["index"] == 1
+        assert calls[0]["total"] == 2
+        assert calls[1]["url"] == "https://www.linkedin.com/jobs/b"
+        assert calls[1]["search_name"] == "Second"
+        assert calls[1]["index"] == 2
+        assert calls[1]["total"] == 2
+
+    def test_single_entry_config_loops_correctly(self, monkeypatch):
+        """A single configured search still gets index=1/total=1 (off-by-one guard)."""
+        searches = [types.SimpleNamespace(name="Only", url="https://www.linkedin.com/jobs/x")]
+        calls = self._run_main(monkeypatch, searches)
+
+        assert len(calls) == 1
+        assert calls[0]["index"] == 1
+        assert calls[0]["total"] == 1

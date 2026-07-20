@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from agent.runner import SetupError, check_setup
-from app.config import load_roles, role_color_map
+from app.config import load_config, load_roles, role_color_map
 from app.database import JOB_STATUSES, get_connection, init_db
 from app.logging_setup import setup_logging
 
@@ -34,13 +34,13 @@ BASE_DIR = Path(__file__).parent.parent
 app = FastAPI(title="Scout")
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 
-# Step scaffolding for the run drawer. Global steps run once per run; email
-# steps run once per Gmail alert email (keys must match runner.py's emit calls).
+# Step scaffolding for the run drawer. Global steps run once per run; search
+# steps run once per configured LinkedIn search (keys must match runner.py's
+# emit calls).
 GLOBAL_STEPS = [
     ("start", "Starting agent"),
-    ("gmail", "Pulling messages from Gmail"),
 ]
-EMAIL_STEPS = [
+SEARCH_STEPS = [
     ("scrape", "Scraping LinkedIn (sub-agent)"),
     ("filter", "Filtering jobs"),
     ("clean", "Cleaning descriptions"),
@@ -52,18 +52,17 @@ EMAIL_STEPS = [
 RUN_LOG_MAXLEN = 200
 
 # In-memory run state (single-user local app — no need for DB persistence here).
-# Structured so the drawer can render per-step / per-email progress live.
+# Structured so the drawer can render per-step / per-search progress live.
 _run: dict = {
     "running": False,
     "error": None,
     "done": False,
-    "gmail_auth_required": False,
     "started_at": None,
     "finished_at": None,
     "backend": None,
     "models": {},
     "global_steps": [],
-    "emails": [],
+    "searches": [],
     "log": [],
 }
 _run_lock = threading.Lock()
@@ -73,13 +72,22 @@ _run_lock = threading.Lock()
 # Run-state helpers (all mutate _run and must be called while holding _run_lock)
 # ---------------------------------------------------------------------------
 
-def _init_run_state() -> None:
-    """Reset _run to a fresh scaffold with every step pending, first step active."""
+def _init_run_state(url: str | None = None) -> None:
+    """Reset _run to a fresh scaffold with every step pending, first step active.
+
+    When ``url`` is not set (the default, config-driven run), pre-populates
+    the search groups synchronously from ``load_config().linkedin_searches``
+    so the drawer shows every configured search immediately on click, rather
+    than waiting for the subprocess's first stdout line. An ad-hoc ``--url``
+    run has no config-backed group to pre-create — its single group is
+    created on the fly by ``_apply_event``'s fallback once the runner emits
+    its first event.
+    """
+    searches = [] if url else load_config().linkedin_searches
     _run.update({
         "running": True,
         "error": None,
         "done": False,
-        "gmail_auth_required": False,
         "started_at": datetime.now(timezone.utc),
         "finished_at": None,
         "backend": None,
@@ -89,7 +97,10 @@ def _init_run_state() -> None:
              "started_at": None, "elapsed": None}
             for k, l in GLOBAL_STEPS
         ],
-        "emails": [],
+        "searches": [
+            _search_group(i, len(searches), s.name)
+            for i, s in enumerate(searches, 1)
+        ],
         "log": [],
     })
     _run["global_steps"][0]["status"] = "active"
@@ -100,16 +111,16 @@ def _find_step(steps: list[dict], key: str | None) -> dict | None:
     return next((s for s in steps if s["key"] == key), None)
 
 
-def _email_group(index: int, total: int = 1, subject: str = "") -> dict:
-    """Build a fresh per-email step group with all sub-steps pending."""
+def _search_group(index: int, total: int = 1, name: str = "") -> dict:
+    """Build a fresh per-search step group with all sub-steps pending."""
     return {
         "index": index,
         "total": total,
-        "subject": subject,
+        "name": name,
         "steps": [
             {"key": k, "label": l, "status": "pending", "stat": None,
              "started_at": None, "elapsed": None}
-            for k, l in EMAIL_STEPS
+            for k, l in SEARCH_STEPS
         ],
     }
 
@@ -154,21 +165,12 @@ def _apply_event(ev: dict) -> None:
         step = _find_step(_run["global_steps"], ev.get("key"))
         if step:
             _update_step(step, ev)
-        # The gmail event carries the email subjects — pre-create their groups
-        # so the drawer shows all pending emails up front.
-        if ev.get("key") == "gmail" and "emails" in ev:
-            subs = ev["emails"]
-            _run["emails"] = [
-                _email_group(i, len(subs), s) for i, s in enumerate(subs, 1)
-            ]
-        if ev.get("auth_required"):
-            _run["gmail_auth_required"] = True
-    elif scope == "email":
+    elif scope == "search":
         idx = ev.get("index")
-        grp = next((g for g in _run["emails"] if g["index"] == idx), None)
-        if grp is None:  # e.g. a manual --url run with no gmail step
-            grp = _email_group(idx, ev.get("total", 1), ev.get("subject", ""))
-            _run["emails"].append(grp)
+        grp = next((g for g in _run["searches"] if g["index"] == idx), None)
+        if grp is None:  # e.g. a manual --url run with no pre-created group
+            grp = _search_group(idx, ev.get("total", 1), ev.get("name", ""))
+            _run["searches"].append(grp)
         step = _find_step(grp["steps"], ev.get("key"))
         if step:
             _update_step(step, ev)
@@ -189,7 +191,7 @@ def _mark_active_as_error(msg: str) -> None:
         if step["status"] == "active":
             _fail(step)
             return
-    for grp in _run["emails"]:
+    for grp in _run["searches"]:
         for step in grp["steps"]:
             if step["status"] == "active":
                 _fail(step)
@@ -203,7 +205,7 @@ def _nav_state() -> dict:
         for step in _run["global_steps"]:
             if step["status"] == "active":
                 label = step["label"]
-        for grp in _run["emails"]:
+        for grp in _run["searches"]:
             for step in grp["steps"]:
                 if step["status"] == "active":
                     label = step["label"]
@@ -455,7 +457,7 @@ def _finalize_snapshot(snapshot: dict, now: datetime) -> None:
 
     for step in snapshot["global_steps"]:
         _finalize_step(step)
-    for group in snapshot["emails"]:
+    for group in snapshot["searches"]:
         for step in group["steps"]:
             _finalize_step(step)
 
@@ -505,13 +507,13 @@ async def trigger_run(
     with _run_lock:
         already_running = _run["running"]
         if not already_running:
-            _init_run_state()
+            _init_run_state(url or None)
     if already_running:
         return _render_drawer(request)
 
     logging.getLogger("scout").info(
         "Run triggered from UI (url=%s, model call logging %s)",
-        url or "gmail", "on" if log_model_calls else "off")
+        url or "config searches", "on" if log_model_calls else "off")
     threading.Thread(
         target=_start_run_background,
         args=(url or None, log_model_calls),
@@ -525,30 +527,6 @@ async def trigger_run(
 async def run_status(request: Request) -> HTMLResponse:
     """Return the current run drawer partial (polled by HTMX while running)."""
     return _render_drawer(request)
-
-
-@app.post("/auth/gmail/reauth", response_class=HTMLResponse)
-def gmail_reauth() -> HTMLResponse:
-    """Delete the stale OAuth token and run a fresh browser-based auth flow.
-
-    Blocks until the user completes the Google consent screen (run_local_server
-    opens a browser tab on a random port), then returns a status fragment that
-    HTMX swaps in place of the Reauthenticate button.
-    """
-    from app.gmail import TOKEN_FILE, get_gmail_service
-    TOKEN_FILE.unlink(missing_ok=True)
-    try:
-        get_gmail_service()
-        return HTMLResponse(
-            '<p class="text-sm text-emerald-600 dark:text-emerald-400 font-medium">'
-            "Authenticated. Try running Scout again.</p>"
-        )
-    except Exception as exc:
-        logging.getLogger("scout").error("Gmail reauth failed: %s", exc)
-        return HTMLResponse(
-            f'<p class="text-sm text-rose-600 dark:text-rose-400">'
-            f"Reauth failed: {exc}</p>"
-        )
 
 
 @app.patch("/jobs/{job_id}/status", response_class=HTMLResponse)

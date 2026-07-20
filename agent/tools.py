@@ -10,7 +10,6 @@ Two roles:
 import json
 import uuid
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse, parse_qs, unquote
 
 import duckdb
@@ -95,19 +94,8 @@ def _unwrap_linkedin_redirect(url: str | None) -> str | None:
     return url
 
 
-def _parse_email_date(email_date: str) -> datetime | None:
-    """Convert an RFC 2822 email date string to a datetime for DuckDB TIMESTAMP storage."""
-    if not email_date:
-        return None
-    try:
-        return parsedate_to_datetime(email_date).astimezone(timezone.utc).replace(tzinfo=None)
-    except Exception:
-        return None
-
-
 def create_scrape_run(
-    email_subject: str,
-    email_date: str,
+    search_name: str,
     linkedin_url: str,
     role_type: str,
 ) -> str:
@@ -116,10 +104,10 @@ def create_scrape_run(
     conn = get_connection()
     conn.execute(
         """
-        INSERT INTO scrape_runs (run_id, email_subject, email_date, linkedin_search_url, role_type)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO scrape_runs (run_id, search_name, linkedin_search_url, role_type)
+        VALUES (?, ?, ?, ?)
         """,
-        [run_id, email_subject, _parse_email_date(email_date), linkedin_url, role_type],
+        [run_id, search_name, linkedin_url, role_type],
     )
     conn.close()
     return run_id

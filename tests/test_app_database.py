@@ -12,6 +12,7 @@ from app.database import (
     find_original_job,
     JOB_STATUSES,
     APPLY_PLATFORMS,
+    _JOBS_COLUMNS,
 )
 
 
@@ -91,8 +92,7 @@ class TestInitDb:
             columns = [col[0] for col in result]
 
             assert "run_id" in columns
-            assert "email_subject" in columns
-            assert "email_date" in columns
+            assert "search_name" in columns
             assert "linkedin_search_url" in columns
             assert "role_type" in columns
             assert "jobs_found" in columns
@@ -127,6 +127,113 @@ class TestInitDb:
             assert "date_scraped" in columns
 
             conn.close()
+
+
+class TestMigrateScrapeRunsSchema:
+    """Test the one-time migration from the Gmail-era scrape_runs schema
+    (email_subject/email_date) to search_name."""
+
+    def _old_schema_db(self, db_path):
+        """Populate db_path with the pre-migration scrape_runs/jobs schema."""
+        with patch('app.database.DB_PATH', db_path):
+            conn = get_connection()
+            conn.execute("""
+                CREATE TABLE scrape_runs (
+                    run_id VARCHAR PRIMARY KEY,
+                    email_subject VARCHAR,
+                    email_date TIMESTAMP,
+                    linkedin_search_url VARCHAR,
+                    role_type VARCHAR,
+                    jobs_found INTEGER DEFAULT 0,
+                    run_at TIMESTAMP DEFAULT current_timestamp
+                )
+            """)
+            conn.execute("CREATE TABLE jobs " + _JOBS_COLUMNS)
+            conn.execute(
+                "INSERT INTO scrape_runs (run_id, email_subject, email_date, "
+                "linkedin_search_url, jobs_found) VALUES (?, ?, ?, ?, ?)",
+                ["r1", "Daily LinkedIn Search", "2026-01-01 00:00:00",
+                 "https://linkedin.com/jobs/x", 5],
+            )
+            conn.execute(
+                "INSERT INTO jobs (job_id, scrape_run_id, title) VALUES (?, ?, ?)",
+                ["j1", "r1", "Senior Engineer"],
+            )
+            conn.close()
+
+    def test_migrates_email_subject_to_search_name(self, tmp_path):
+        """email_subject's value lands in the new search_name column."""
+        db_path = tmp_path / "scout.duckdb"
+        self._old_schema_db(db_path)
+        with patch('app.database.DB_PATH', db_path):
+            init_db()
+            conn = get_connection()
+            row = conn.execute(
+                "SELECT run_id, search_name, linkedin_search_url, jobs_found "
+                "FROM scrape_runs"
+            ).fetchone()
+            conn.close()
+        assert row == ("r1", "Daily LinkedIn Search", "https://linkedin.com/jobs/x", 5)
+
+    def test_preserves_backup_table_with_original_columns(self, tmp_path):
+        """The pre-migration data is preserved verbatim in scrape_runs_backup."""
+        db_path = tmp_path / "scout.duckdb"
+        self._old_schema_db(db_path)
+        with patch('app.database.DB_PATH', db_path):
+            init_db()
+            conn = get_connection()
+            columns = [c[0] for c in conn.execute(
+                "SELECT * FROM scrape_runs_backup LIMIT 0"
+            ).description]
+            row = conn.execute(
+                "SELECT email_subject FROM scrape_runs_backup"
+            ).fetchone()
+            conn.close()
+        assert "email_subject" in columns
+        assert "email_date" in columns
+        assert row[0] == "Daily LinkedIn Search"
+
+    def test_jobs_fk_still_resolves_after_migration(self, tmp_path):
+        """jobs.scrape_run_id still joins correctly against the rebuilt table."""
+        db_path = tmp_path / "scout.duckdb"
+        self._old_schema_db(db_path)
+        with patch('app.database.DB_PATH', db_path):
+            init_db()
+            conn = get_connection()
+            row = conn.execute(
+                "SELECT j.title, s.search_name FROM jobs j "
+                "JOIN scrape_runs s ON j.scrape_run_id = s.run_id"
+            ).fetchone()
+            conn.close()
+        assert row == ("Senior Engineer", "Daily LinkedIn Search")
+
+    def test_migration_is_idempotent(self, tmp_path):
+        """Calling init_db() again after migration doesn't re-migrate or error."""
+        db_path = tmp_path / "scout.duckdb"
+        self._old_schema_db(db_path)
+        with patch('app.database.DB_PATH', db_path):
+            init_db()
+            init_db()
+            conn = get_connection()
+            run_count = conn.execute("SELECT COUNT(*) FROM scrape_runs").fetchone()[0]
+            backup_count = conn.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name = 'scrape_runs_backup'"
+            ).fetchone()[0]
+            conn.close()
+        assert run_count == 1
+        assert backup_count == 1
+
+    def test_fresh_database_skips_migration(self, temp_db):
+        """A brand-new database has no scrape_runs_backup table."""
+        with patch('app.database.DB_PATH', temp_db):
+            conn = get_connection()
+            backup_count = conn.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name = 'scrape_runs_backup'"
+            ).fetchone()[0]
+            conn.close()
+        assert backup_count == 0
 
 
 class TestFindOriginalJob:

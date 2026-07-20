@@ -11,8 +11,9 @@ sys.path.insert(0, str(project_root))
 
 
 STANDARD_TEST_CONFIG = """\
-[gmail]
-label = "Job Alerts"
+[[linkedin_searches]]
+name = "Test Search"
+url = "https://www.linkedin.com/jobs/search-results/?keywords=engineer"
 
 [filters]
 exclude_companies = ["ExcludedCorp"]

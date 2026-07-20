@@ -21,8 +21,7 @@ def main():
     jobs = data["jobs"]
 
     run_id = create_scrape_run(
-        email_subject="Sample data import",
-        email_date="2026-06-29",
+        search_name="Sample data import",
         linkedin_url=meta["source_url"],
         role_type=meta["role_type"],
     )

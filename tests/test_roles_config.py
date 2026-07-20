@@ -1,6 +1,6 @@
 """Tests for the user config: profiles/config.toml parsing and validation
-(roles, gmail, filters, scoring), color assignment, prompt injection, and
-role normalization."""
+(roles, linkedin_searches, filters, scoring), color assignment, prompt
+injection, and role normalization."""
 
 from unittest.mock import Mock
 
@@ -23,8 +23,9 @@ from app.config import (
 # their own [llm] block (BOILERPLATE_NO_LLM) while everything else gets a valid
 # default one (BOILERPLATE_SECTIONS).
 BOILERPLATE_NO_LLM = """
-[gmail]
-label = "Test Label"
+[[linkedin_searches]]
+name = "Test Search"
+url = "https://www.linkedin.com/jobs/search-results/?keywords=engineer"
 
 [filters]
 exclude_companies = []
@@ -48,8 +49,8 @@ max_workers = 2
 def _write_config(text: str, boilerplate: bool = True) -> None:
     """Write TOML to the per-test config path set up by isolated_roles_config.
 
-    Appends valid [gmail]/[filters]/[scoring] sections unless boilerplate is
-    False (for tests exercising those sections' own validation).
+    Appends valid [[linkedin_searches]]/[filters]/[scoring] sections unless
+    boilerplate is False (for tests exercising those sections' own validation).
     """
     if boilerplate:
         text += BOILERPLATE_SECTIONS
@@ -123,14 +124,82 @@ definition = "b"
 
 ROLES_ONLY = '[[roles]]\nname = "PM"\ndefinition = "products"\n'
 
+VALID_SEARCH = ('[[linkedin_searches]]\nname = "Test Search"\n'
+                 'url = "https://www.linkedin.com/jobs/search-results/?keywords=engineer"\n')
+
+
+class TestLinkedInSearchesSection:
+    """Test [[linkedin_searches]] parsing and validation."""
+
+    def test_no_entries_raises(self):
+        """No [[linkedin_searches]] at all is an error — at least one is required."""
+        _write_config(ROLES_ONLY + BOILERPLATE_SECTIONS.replace(VALID_SEARCH, ""),
+                      boilerplate=False)
+        with pytest.raises(ValueError, match="linkedin_searches"):
+            load_config()
+
+    def test_missing_name_raises(self):
+        """An entry without a name is a config error."""
+        _write_config(ROLES_ONLY + BOILERPLATE_SECTIONS.replace(
+            'name = "Test Search"', 'name = "  "'), boilerplate=False)
+        with pytest.raises(ValueError, match="name"):
+            load_config()
+
+    def test_missing_url_raises(self):
+        """An entry without a url is a config error."""
+        _write_config(ROLES_ONLY + BOILERPLATE_SECTIONS.replace(
+            'url = "https://www.linkedin.com/jobs/search-results/?keywords=engineer"',
+            'url = "  "'), boilerplate=False)
+        with pytest.raises(ValueError, match="url"):
+            load_config()
+
+    def test_non_linkedin_url_raises(self):
+        """A url that isn't a linkedin.com URL is rejected."""
+        _write_config(ROLES_ONLY + BOILERPLATE_SECTIONS.replace(
+            'url = "https://www.linkedin.com/jobs/search-results/?keywords=engineer"',
+            'url = "https://example.com/jobs"'), boilerplate=False)
+        with pytest.raises(ValueError, match="linkedin.com"):
+            load_config()
+
+    def test_duplicate_names_raise(self):
+        """Duplicate search names (case-insensitive) are rejected."""
+        _write_config(
+            ROLES_ONLY
+            + '[[linkedin_searches]]\nname = "Search A"\n'
+              'url = "https://www.linkedin.com/jobs/search-results/?keywords=a"\n'
+              '[[linkedin_searches]]\nname = "search a"\n'
+              'url = "https://www.linkedin.com/jobs/search-results/?keywords=b"\n'
+            + BOILERPLATE_SECTIONS.replace(VALID_SEARCH, ""),
+            boilerplate=False,
+        )
+        with pytest.raises(ValueError, match="duplicate"):
+            load_config()
+
+    def test_multi_entry_config_returns_in_file_order(self):
+        """Multiple entries come back in the order they're written, with name/url."""
+        _write_config(
+            ROLES_ONLY
+            + '[[linkedin_searches]]\nname = "First"\n'
+              'url = "https://www.linkedin.com/jobs/search-results/?keywords=a"\n'
+              '[[linkedin_searches]]\nname = "Second"\n'
+              'url = "https://www.linkedin.com/jobs/search-results/?keywords=b"\n'
+            + BOILERPLATE_SECTIONS.replace(VALID_SEARCH, ""),
+            boilerplate=False,
+        )
+        searches = load_config().linkedin_searches
+        assert [s.name for s in searches] == ["First", "Second"]
+        assert searches[0].url == "https://www.linkedin.com/jobs/search-results/?keywords=a"
+        assert searches[1].url == "https://www.linkedin.com/jobs/search-results/?keywords=b"
+
 
 class TestConfigSections:
-    """Test validation of the [gmail]/[filters]/[scoring] sections."""
+    """Test validation of the [[linkedin_searches]]/[filters]/[scoring] sections."""
 
     def test_full_config_parses(self):
         """The standard test config yields every section's values."""
         config = load_config()
-        assert config.gmail_label == "Job Alerts"
+        assert len(config.linkedin_searches) == 1
+        assert config.linkedin_searches[0].name == "Test Search"
         assert config.exclude_companies == ["ExcludedCorp"]
         assert (config.fit_weight, config.criteria_weight,
                 config.dealbreaker_cap) == (0.85, 0.15, 30.0)
@@ -139,20 +208,6 @@ class TestConfigSections:
         """[filters] exclude_companies = [] is explicitly allowed."""
         _write_config(ROLES_ONLY)  # boilerplate has an empty exclude list
         assert load_config().exclude_companies == []
-
-    def test_missing_gmail_section_raises(self):
-        """No [gmail] -> error naming the section."""
-        _write_config(ROLES_ONLY + BOILERPLATE_SECTIONS.replace(
-            '[gmail]\nlabel = "Test Label"\n', ""), boilerplate=False)
-        with pytest.raises(ValueError, match=r"\[gmail\]"):
-            load_config()
-
-    def test_empty_gmail_label_raises(self):
-        """A blank label is as bad as a missing one."""
-        _write_config(ROLES_ONLY + BOILERPLATE_SECTIONS.replace(
-            'label = "Test Label"', 'label = "  "'), boilerplate=False)
-        with pytest.raises(ValueError, match=r"\[gmail\]"):
-            load_config()
 
     def test_missing_exclude_companies_raises(self):
         """[filters] without the exclude_companies key is an error."""
