@@ -5,7 +5,7 @@ orchestrated by [`agent/runner.py`](https://github.com/abraham-jacob/scout/blob/
 The module docstring at the top of that file is the canonical map of the
 pipeline — this page is the reader-facing version of the same design.
 
-![Scout architecture: Gmail and LinkedIn capture, three-pass AI processing (clean, filter, enrich), DuckDB storage, and the FastAPI + HTMX UI](images/architecture.gif)
+![Scout architecture: LinkedIn capture, three-pass AI processing (clean, filter, enrich), DuckDB storage, and the FastAPI + HTMX UI](images/architecture.gif)
 
 ## Pass 1 — browser scrape (Haiku)
 
@@ -81,10 +81,11 @@ retry logs as a retry — not as silent success).
 Jobs land in a local DuckDB database (`data/scout.duckdb`) with two tables:
 `scrape_runs` and `jobs`. `role_type` is stored per-job — derived from the
 title/description at enrichment time — not per-run, since a role's
-classification can change as prompts evolve. Gmail access
-(`app/gmail.py`) uses OAuth (`credentials.json` → `token.json`) to pull
-unread emails under your configured label and extract the "See all jobs"
-URL that seeds Pass 1.
+classification can change as prompts evolve. The URL that seeds Pass 1 comes
+straight from your `[[linkedin_searches]]` config — no external account or
+OAuth flow involved. Each `scrape_runs` row records the search's `name`
+alias (shown in the run drawer and event log) alongside the URL that was
+scraped.
 
 ## Design notes
 

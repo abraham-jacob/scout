@@ -10,8 +10,7 @@ Scout is a personal, single-user tool. It expects:
 | **Git** | To clone the repo |
 | **Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
 | **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at a local model |
-| **A LinkedIn account** logged into Chrome | The scrape runs inside your own session |
-| **A Gmail account** receiving LinkedIn job-alert emails, plus a Google Cloud OAuth client (`credentials.json`) with the Gmail API enabled | Scout reads the alert emails to find the job URLs |
+| **A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |
 | *(Optional)* An OpenAI-compatible local server ([Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on a local model: free and private |
 
 ## 1. Clone and install
@@ -23,7 +22,7 @@ pipenv install
 
 ## 2. External dependencies
 
-Scout leans on three outside accounts before it can run end-to-end. Set
+Scout leans on two outside accounts before it can run end-to-end. Set
 these up once, in any order.
 
 ### Claude Code
@@ -51,15 +50,16 @@ Then:
 There are two distinct tasks here — one you do once during setup, one every
 time you run Scout:
 
-- **One-time — set up job alerts.**
+- **One-time — get your search URL(s).**
 
-    !!! tip "Set up job alerts"
-        Set up job alerts (or a saved search with email alerts on) for the
-        searches you want Scout to track, so LinkedIn starts emailing you
-        postings on a schedule. Those alert emails are what Scout reads in
-        the next step.
+    !!! tip "Copy the search URL, not an email alert"
+        Run the search on LinkedIn with the filters you want (keywords,
+        location, seniority, etc.), then copy the URL straight from your
+        browser's address bar. No email alert subscription is needed —
+        Scout scrapes the search URL directly, every run. Add it to
+        `[[linkedin_searches]]` with a short `name` alias in the next step.
 
-    ![Setting up a LinkedIn job alert](images/linkedin.gif)
+    ![Setting up a LinkedIn job search](images/linkedin.gif)
 
 - **Every run — stay logged into LinkedIn in Chrome.**
 
@@ -67,20 +67,6 @@ time you run Scout:
         Before running Scout, make sure Chrome has a tab open where you're
         actively logged into LinkedIn with your own credentials — the
         scrape runs inside that session, not a headless one.
-
-### Gmail account
-
-Scout finds job postings by reading the LinkedIn alert emails that land in
-Gmail, so it needs read access to that inbox:
-
-- In [Google Cloud Console](https://console.cloud.google.com/), enable the
-  Gmail API and create an OAuth *Desktop app* client. Save the downloaded
-  JSON as `credentials.json` in the repo root.
-- In Gmail, create a filter that applies a label (e.g. `Job Alerts`) to the
-  LinkedIn job-alert emails from the searches you set up above — that label
-  is what you'll reference as `[gmail] label` in the next step.
-- The first run opens a browser window for the OAuth consent flow; after
-  that, the token is cached locally (`token.json`).
 
 ## 3. Configure
 
@@ -105,8 +91,9 @@ profile = "manager.md"          # optional per-role scoring profile in profiles/
 name = "IC"
 definition = "Senior individual contributor. Titles like Staff/Principal Engineer."
 
-[gmail]
-label = "Job Alerts"            # the Gmail label your LinkedIn alerts land under
+[[linkedin_searches]]
+name = "My Search"               # short alias shown in the run drawer/logs
+url = "https://www.linkedin.com/jobs/search-results/?keywords=..."   # copied from LinkedIn
 
 [filters]
 exclude_companies = []          # dropped before any LLM call
@@ -129,7 +116,7 @@ max_workers = 4                 # Pass 2/3 parallelism
 | Section | Required | What it controls |
 |---|---|---|
 | `[[roles]]` | ✅ (≥1) | The role types jobs are classified into; drives prompts, scoring profiles, and UI filters |
-| `[gmail]` | ✅ | The Gmail label your alert emails live under |
+| `[[linkedin_searches]]` | ✅ (≥1) | Named LinkedIn saved-search URLs scraped every run |
 | `[filters]` | ✅ | Companies to drop before any LLM call |
 | `[scoring]` | ✅ | Fit/criteria weights and the dealbreaker score cap |
 | `[logging]` | ✅ | Log directory (daily app log + opt-in model-call log) |
@@ -138,12 +125,9 @@ max_workers = 4                 # Pass 2/3 parallelism
 | `[llm.local.clean]` / `[llm.local.enrich]` | optional | Per-pass request params merged into the local backend's chat-completion call |
 | `[scrape]` | optional | Browser download folder (defaults to `~/Downloads`) |
 
-### `[gmail]`, `[filters]`, `[scoring]`, `[logging]`, `[scrape]`
+### `[filters]`, `[scoring]`, `[logging]`, `[scrape]`
 
 ```toml
-[gmail]
-label = "Daily LinkedIn Search"   # the label your job-alert emails live under
-
 [filters]
 exclude_companies = ["Capital One"]   # dropped before any LLM call; [] is fine
 
@@ -244,6 +228,21 @@ doesn't understand, say) is left for the server to reject.
 See [Local LLM Backend](local-llm.md) for the full picture, including
 warm-up and retry behavior.
 
+### `[[linkedin_searches]]`
+
+Defines the LinkedIn saved-search URLs Scout scrapes every run. Each entry
+has a `name` (a short alias shown in the run drawer/logs in place of the raw
+URL, which can run into the hundreds of characters) and a `url` (the exact
+LinkedIn jobs-search URL — copy it straight from the browser address bar
+after running the search you want on LinkedIn). At least **one** entry is
+required; `name`s must be unique (case-insensitive), and `url` must be a
+`https://www.linkedin.com/` URL.
+
+Every configured search is scraped on every run — there's no need to pick
+just one. Re-scraping the same search repeatedly is safe: jobs already in
+the database are dropped before any LLM call, so nothing is double-processed
+or double-billed.
+
 ### `[[roles]]`
 
 Defines the role types Scout keeps. Each `[[roles]]` entry has a `name` (the
@@ -314,8 +313,8 @@ pipenv run uvicorn app.main:app        # web UI at http://127.0.0.1:8000
 Click **▶ Run Scout**. Or run the pipeline directly from the terminal:
 
 ```bash
-pipenv run python -m agent.runner                   # process unread alert emails
-pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one URL, skip Gmail
+pipenv run python -m agent.runner                   # scrape every configured search
+pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one ad-hoc URL, ignoring config
 ```
 
 From here: read [Using the Web UI](web-ui.md) to see what a run produces, or

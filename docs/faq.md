@@ -39,9 +39,9 @@ binds to localhost; don't expose it to a network.
 
 ## Does this violate LinkedIn's Terms of Service?
 
-Scout automates *your own* browsing of *your own* job alerts, in *your own*
-logged-in Chrome session — one page of results per alert email, no
-crawling, no scale. That said, automated access may still conflict with
+Scout automates *your own* browsing of *your own* saved searches, in *your
+own* logged-in Chrome session — one page of results per configured search,
+no crawling, no scale. That said, automated access may still conflict with
 LinkedIn's Terms of Service; understand them and use your own judgment. This
 project is not affiliated with LinkedIn.
 
