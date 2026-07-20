@@ -16,7 +16,7 @@
 
 **An AI agent that reads your LinkedIn job alerts, scrapes every posting behind them, and tells you which ones are actually worth your time.**
 
-LinkedIn job alert emails are a firehose: dozens of postings a day, half of them reposts, mismatches, or roles you already applied to. Scout drinks from the firehose for you. It pulls the alert emails from Gmail, drives a real Chrome session to scrape **every** job behind each alert (including the ones LinkedIn never renders), cleans the boilerplate out of each description, classifies and scores every role against *your* resume and criteria, and files the survivors into a local database with a clean web UI — each job tagged, summarized, and scored out of 100.
+LinkedIn job search results are a firehose: dozens of postings a day, half of them reposts, mismatches, or roles you already applied to. Scout drinks from the firehose for you. It drives a real Chrome session to scrape **every** job behind each of your saved LinkedIn searches (including the ones LinkedIn never renders), cleans the boilerplate out of each description, classifies and scores every role against *your* resume and criteria, and files the survivors into a local database with a clean web UI — each job tagged, summarized, and scored out of 100.
 
 Everything runs on your machine. Your resume, your criteria, and your job-search data never leave it — except as prompts to the LLM you choose (Claude API, or a fully local model via Ollama).
 
@@ -47,7 +47,7 @@ I built Scout during my own job search. Every morning started with a stack of Li
 
 ## 🧠 How It Works
 
-<img src="docs/images/architecture.gif" alt="Scout architecture: Gmail and LinkedIn capture, three-pass AI processing (clean, filter, enrich), DuckDB storage, and the FastAPI + HTMX UI" width="100%">
+<img src="docs/images/architecture.gif" alt="Scout architecture: LinkedIn capture, three-pass AI processing (clean, filter, enrich), DuckDB storage, and the FastAPI + HTMX UI" width="100%">
 
 Scout is three LLM passes with cheap deterministic filtering in between, orchestrated by [`agent/runner.py`](agent/runner.py):
 
@@ -118,8 +118,7 @@ Scout is a personal, single-user tool. It expects:
 | **Python 3.12** + [pipenv](https://pipenv.pypa.io/) | Runtime & dependency management |
 | **Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
 | **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at a local model |
-| **A Gmail account** receiving LinkedIn job-alert emails, plus a Google Cloud OAuth client (`credentials.json`) with the Gmail API enabled | Scout reads the alert emails to find the job URLs |
-| **A LinkedIn account** logged into Chrome | The scrape runs inside your own session |
+| **A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |
 | *(Optional)* An OpenAI-compatible local server ([Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on a local model: free and private |
 
 <br>
@@ -143,8 +142,9 @@ profile = "manager.md"          # optional per-role scoring profile in profiles/
 name = "IC"
 definition = "Senior individual contributor. Titles like Staff/Principal Engineer."
 
-[gmail]
-label = "Job Alerts"            # the Gmail label your LinkedIn alerts land under
+[[linkedin_searches]]
+name = "My Search"              # short alias shown in the run drawer/logs
+url = "https://www.linkedin.com/jobs/search-results/?keywords=..."   # copied from LinkedIn
 
 [filters]
 exclude_companies = []          # dropped before any LLM call
@@ -164,7 +164,7 @@ max_workers = 4                 # Pass 2/3 parallelism
 
 Then add your resume as `profiles/resume.md` (plus optional per-role profiles and a `criteria.md` with hard requirements — see [`profiles/README.md`](profiles/README.md)). Everything in `profiles/` except its README is git-ignored; your personal data stays local.
 
-**2. Wire up Gmail.** In [Google Cloud Console](https://console.cloud.google.com/), enable the Gmail API and create an OAuth *Desktop app* client. Save the JSON as `credentials.json` in the repo root. In Gmail, create a filter that applies your chosen label (e.g. `Job Alerts`) to LinkedIn job-alert emails. The first run opens a browser window for the OAuth consent flow.
+**2. Add your LinkedIn searches.** On LinkedIn, set up the job search(es) you want Scout to track. Copy each search's URL straight from your browser's address bar and add it to `[[linkedin_searches]]` in `profiles/config.toml` with a short `name` alias — no Gmail, no OAuth, no API keys.
 
 **3. Prepare Chrome.** Install the Claude in Chrome extension, be logged into LinkedIn, and turn **off** *Settings → Downloads → "Ask where to save each file before downloading"* (Pass 1 hands off scraped data through a browser download — a save dialog would stall the agent).
 
@@ -177,8 +177,8 @@ pipenv run uvicorn app.main:app        # web UI at http://127.0.0.1:8000
 Click **▶ Run Scout**. Or run the pipeline directly from the terminal:
 
 ```bash
-pipenv run python -m agent.runner                   # process unread alert emails
-pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one URL, skip Gmail
+pipenv run python -m agent.runner                   # scrape every configured search
+pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one ad-hoc URL, ignoring config
 ```
 
 <br>
@@ -215,7 +215,7 @@ All user configuration lives in `profiles/config.toml`, validated loudly at star
 | Section | Required | What it controls |
 |---|---|---|
 | `[[roles]]` | ✅ (≥1) | The role types jobs are classified into; drives prompts, scoring profiles, and UI filters |
-| `[gmail]` | ✅ | The Gmail label your alert emails live under |
+| `[[linkedin_searches]]` | ✅ (≥1) | Named LinkedIn saved-search URLs scraped every run |
 | `[filters]` | ✅ | Companies to drop before any LLM call |
 | `[scoring]` | ✅ | Fit/criteria weights and the dealbreaker score cap |
 | `[logging]` | ✅ | Log directory (daily app log + opt-in model-call log) |
@@ -264,7 +264,7 @@ With the Claude backend, a run costs what the models cost: Haiku for the scrape 
 
 ## ⚠️ Limitations & Responsible Use
 
-- **Personal use, by design.** Scout automates *your own* browsing of *your own* job alerts, in *your own* logged-in Chrome session — one page of results per alert email, no crawling, no scale. Automated access may still conflict with LinkedIn's Terms of Service; understand them and use your judgment. This project is not affiliated with LinkedIn.
+- **Personal use, by design.** Scout automates *your own* browsing of *your own* saved searches, in *your own* logged-in Chrome session — one page of results per configured search, no crawling, no scale. Automated access may still conflict with LinkedIn's Terms of Service; understand them and use your judgment. This project is not affiliated with LinkedIn.
 - **Single-user, local-only.** The web UI has no authentication and binds to localhost; run state lives in memory. Don't expose it to a network.
 - **The browser is busy during Pass 1.** The scrape drives a real Chrome tab; grab a coffee — the run drawer will tell you exactly what's happening.
 

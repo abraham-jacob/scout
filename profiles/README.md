@@ -10,8 +10,13 @@ machine.
 The user config: five required sections, plus one optional `[scrape]`:
 
 ```toml
-[gmail]
-label = "Daily LinkedIn Search"   # the label your job-alert emails live under
+[[linkedin_searches]]
+name = "Senior IC Bay Area"          # short alias shown in the UI/logs
+url = "https://www.linkedin.com/jobs/search-results/?keywords=staff+engineer+python&geoId=90000084"
+
+[[linkedin_searches]]
+name = "EM Remote"
+url = "https://www.linkedin.com/jobs/search-results/?keywords=engineering+manager+remote&geoId=90000084"
 
 [filters]
 exclude_companies = ["Capital One"]   # dropped before any LLM call; [] is fine
@@ -102,6 +107,21 @@ set it explicitly here if you want it). Values must be scalars
 those keys are rejected here. Parameter *values* aren't validated — an
 unsupported one (a `reasoning_effort` a non-reasoning model doesn't understand,
 say) is left for the server to reject.
+
+### `[[linkedin_searches]]`
+
+Defines the LinkedIn saved-search URLs Scout scrapes every run. Each entry
+has a `name` (a short alias shown in the run drawer/logs in place of the raw
+URL, which can run into the hundreds of characters) and a `url` (the exact
+LinkedIn jobs-search URL — copy it straight from the browser address bar
+after setting up the search/alert on LinkedIn). At least **one** entry is
+required; `name`s must be unique (case-insensitive), and `url` must be a
+`https://www.linkedin.com/` URL.
+
+Every configured search is scraped on every run — there's no need to pick
+just one. Re-scraping the same search repeatedly is safe: jobs already in
+the database are dropped before any LLM call, so nothing is double-processed
+or double-billed.
 
 ### `[[roles]]`
 

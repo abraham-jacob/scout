@@ -2,13 +2,11 @@
 
 import json
 import pytest
-from datetime import datetime, timezone
 from unittest.mock import Mock, patch, MagicMock
 import duckdb
 
 from agent.tools import (
     _unwrap_linkedin_redirect,
-    _parse_email_date,
     create_scrape_run,
     get_existing_job_ids,
     save_jobs,
@@ -43,37 +41,6 @@ class TestUnwrapLinkedinRedirect:
         assert _unwrap_linkedin_redirect(redirect) == redirect
 
 
-class TestParseEmailDate:
-    """Test RFC 2822 email date parsing."""
-
-    def test_parse_valid_rfc2822_date(self):
-        """Parse valid RFC 2822 email date."""
-        date_str = "Thu, 01 Jan 2026 12:00:00 +0000"
-        result = _parse_email_date(date_str)
-        assert result is not None
-        assert isinstance(result, datetime)
-        assert result.year == 2026
-
-    def test_parse_empty_string(self):
-        """Return None for empty string."""
-        assert _parse_email_date("") is None
-
-    def test_parse_invalid_date(self):
-        """Return None for invalid date string."""
-        assert _parse_email_date("invalid date") is None
-
-    def test_parse_none(self):
-        """Return None for None input."""
-        assert _parse_email_date(None) is None
-
-    def test_parsed_date_is_utc(self):
-        """Ensure parsed date is converted to UTC."""
-        date_str = "Thu, 01 Jan 2026 12:00:00 +0500"
-        result = _parse_email_date(date_str)
-        assert result is not None
-        assert result.tzinfo is None  # DuckDB TIMESTAMP is offset-naive
-
-
 class TestCreateScrapeRun:
     """Test scrape run creation in database."""
 
@@ -84,8 +51,7 @@ class TestCreateScrapeRun:
         mock_get_conn.return_value = mock_conn
 
         run_id = create_scrape_run(
-            email_subject="Test Subject",
-            email_date="Thu, 01 Jan 2026 12:00:00 +0000",
+            search_name="Senior IC Bay Area",
             linkedin_url="https://linkedin.com/jobs",
             role_type="manager"
         )
@@ -96,14 +62,13 @@ class TestCreateScrapeRun:
         mock_conn.close.assert_called_once()
 
     @patch('agent.tools.get_connection')
-    def test_create_scrape_run_with_empty_email_date(self, mock_get_conn):
-        """Create scrape run with empty email date (should parse to None)."""
+    def test_create_scrape_run_with_no_role_type(self, mock_get_conn):
+        """Create scrape run with role_type=None (a run has no single role)."""
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
 
         run_id = create_scrape_run(
-            email_subject="Test Subject",
-            email_date="",
+            search_name="Senior IC Bay Area",
             linkedin_url="https://linkedin.com/jobs",
             role_type=None
         )

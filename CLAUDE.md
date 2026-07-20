@@ -21,9 +21,8 @@ pipenv install --dev                       # install deps
 pipenv run uvicorn app.main:app --reload
 
 # Run the agent pipeline directly (the web UI shells out to this same command):
-pipenv run python -m agent.runner                  # pull URLs from Gmail
-pipenv run python -m agent.runner --url <linkedin_url>   # scrape one URL, skip Gmail
-pipenv run python -m agent.runner --max-emails 5
+pipenv run python -m agent.runner                  # scrape every configured [[linkedin_searches]] entry
+pipenv run python -m agent.runner --url <linkedin_url>   # scrape one ad-hoc URL, ignoring config
 
 # Initialise / inspect the DuckDB schema
 pipenv run python -m app.database
@@ -87,7 +86,9 @@ which also does repost detection and unwraps LinkedIn safety-redirect apply URLs
 
 All user configuration lives in `profiles/config.toml` (loaded and validated by
 `app/config.py::load_config`). The file is **required**, with six required
-sections and no in-code defaults: `[[roles]]` (≥1 role type), `[gmail]` (label),
+sections and no in-code defaults: `[[roles]]` (≥1 role type),
+`[[linkedin_searches]]` (≥1 named saved-search URL, scraped every run —
+`name` is the alias shown in the UI/logs in place of the raw URL),
 `[filters]` (exclude_companies, may be empty), `[scoring]` (fit/criteria
 weights summing to 1, plus dealbreaker_cap used by `compute_match_score`),
 `[logging]` (dir for the daily app log and the opt-in model-call log; see
@@ -121,14 +122,15 @@ alone).
 reads the subprocess stdout line by line and folds those events into the in-memory
 `_run` dict (`_apply_event`), which renders the live "run drawer" partial that HTMX
 polls at `GET /scout/status`. Event `key`s in `runner.py`'s `emit()` calls must stay
-in sync with `GLOBAL_STEPS` / `EMAIL_STEPS` in `app/main.py`.
+in sync with `GLOBAL_STEPS` / `SEARCH_STEPS` in `app/main.py`.
 
 ### Data layer
 `app/database.py` — DuckDB at `data/scout.duckdb`, two tables (`scrape_runs`, `jobs`).
 `role_type` is per-job (derived from the title/description at enrichment), not per-run.
-`app/gmail.py` — OAuth via `credentials.json` → `token.json`; pulls unread emails
-under the configured Gmail label (`[gmail] label` in `profiles/config.toml`) and
-extracts the "See all jobs" URL.
+`scrape_runs.email_subject`/`email_date` predate the `[[linkedin_searches]]`
+redesign and have no migration path (`init_db()` only does `CREATE TABLE IF
+NOT EXISTS`); `create_scrape_run()`'s callers now repurpose them to carry the
+search's `name` alias and an empty date rather than an actual email subject/date.
 
 ### `agent/tools.py` dual role
 It holds both the plain Python DB helpers `runner.py` calls directly AND

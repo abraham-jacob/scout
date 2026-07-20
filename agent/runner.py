@@ -32,8 +32,8 @@ OpenAI-compatible server (e.g. Ollama). Pass 1 always runs on Claude — it driv
 the browser and is agentic, which a local text model can't do.
 
 Usage:
-    python -m agent.runner                 # reads Gmail for URLs
-    python -m agent.runner --url <url>     # specific URL
+    python -m agent.runner                 # scrapes every profiles/config.toml [[linkedin_searches]] entry
+    python -m agent.runner --url <url>     # scrape one ad-hoc URL, ignoring config
 """
 
 import argparse
@@ -52,11 +52,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
-from google.auth.exceptions import RefreshError
 
 from app.config import load_config, load_roles
 from app.database import init_db
-from app.gmail import get_job_alert_emails, mark_email_read
 from app.logging_setup import get_model_logger, setup_logging
 from agent.tools import create_scrape_run, save_jobs, get_existing_job_ids
 
@@ -144,7 +142,7 @@ def emit_log(msg: str, level: str = "info", index: int | None = None) -> None:
     """Emit one line for the run drawer's scrolling event-log pane.
 
     ``level`` drives the log line's color in the UI ("info", "good", "drop",
-    "head"); ``index`` optionally ties the line to a specific email group.
+    "head"); ``index`` optionally ties the line to a specific search group.
     The web UI timestamps each line on receipt (see app/main.py::_apply_event)
     rather than trusting a value from this subprocess, so no timestamp is sent.
     """
@@ -411,21 +409,65 @@ def _run_claude_headless(model: str, system_prompt: str,
     return envelope.get("result", "")
 
 
+# A non-streaming request gives Ollama nothing to write until generation is
+# fully done, so a client-side timeout goes completely unnoticed server-side
+# — the server keeps computing a response nobody will read, and the next
+# request queues up behind it, cascading timeouts across the whole batch
+# (observed in practice). Streaming means the server is writing bytes
+# continuously, so a dead client is noticed on its next write instead of
+# after the full (possibly abandoned) generation completes. It has a second
+# benefit: httpx's read timeout applies per-chunk on a streamed response, not
+# once for the whole reply, so a slow-but-progressing generation no longer
+# trips a false-positive timeout the way one all-or-nothing deadline did —
+# only a genuine stall (no new chunk within config.local_timeout) does.
+# LOCAL_STREAM_RETRIES/LOCAL_STREAM_RETRY_DELAY_S retry a stalled/dropped
+# stream a few times, pausing between attempts so an already-abandoned
+# generation has a chance to actually finish draining server-side before the
+# next attempt piles on top of it.
+LOCAL_STREAM_RETRIES = 3
+LOCAL_STREAM_RETRY_DELAY_S = 10
+
+
 def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
                    user_message: str) -> str | None:
-    """POST one chat-completion to the configured OpenAI-compatible server.
+    """POST one streamed chat-completion to the configured OpenAI-compatible server.
 
     Talks to config.local_base_url (e.g. an Ollama server's /v1 endpoint),
     asking for JSON output. Temperature is NOT forced — the server/model default
     applies unless the per-pass param table sets one. That optional table
     ([llm.local.<pass_name>], e.g. temperature or GPT-OSS's reasoning_effort) is
     merged over the JSON-mode baseline — so a user can raise the effort for enrich
-    and drop it for clean — but the model/messages/stream fields the pipeline owns
-    are re-asserted afterward so a stray config key can't clobber them. Maps the
-    returned OpenAI usage object into the token tracker at zero cost (local
-    inference is free to us) and returns the assistant message text, or None on
-    any HTTP/parse failure so the caller falls back gracefully. _extract_json
-    still tolerates stray prose if the server ignores the JSON-mode request.
+    and drop it for clean — but the model/messages/stream/stream_options fields
+    the pipeline owns are re-asserted afterward so a stray config key can't
+    clobber them.
+
+    Streams the response (see LOCAL_STREAM_RETRIES above for why) and
+    reassembles the answer from each chunk's delta.content. Reasoning/thinking
+    tokens (confirmed via a live test against Ollama) arrive as a separate
+    delta.reasoning field and are never mixed into delta.content, so they're
+    simply skipped rather than needing to be stripped out of the final text.
+    stream_options.include_usage=true (also confirmed supported) makes the
+    server send one final chunk with empty choices and a populated usage
+    field just before [DONE]; that's mapped into the token tracker at zero
+    cost (local inference is free to us).
+
+    Retries up to LOCAL_STREAM_RETRIES times, LOCAL_STREAM_RETRY_DELAY_S apart,
+    on a connection error or a stream stall — this composes with
+    _retry_local_failures' own single batch-level retry pass, so a call can
+    exhaust its retries here and still get one more shot there. Returns the
+    assistant message text, or None if every attempt fails so the caller
+    falls back gracefully. _extract_json still tolerates stray prose if the
+    server ignores the JSON-mode request.
+
+    Every failure (connection error, stream stall, or a stream that ends
+    with reasoning chunks but no content — the model reasoning itself out of
+    budget without ever producing an answer) is also emit_log'd, not just
+    printed to stderr — this subprocess's stderr is piped into an in-memory
+    buffer by app/main.py and only ever surfaced (truncated) if the whole
+    run fails, so a per-job failure that falls back gracefully would
+    otherwise be invisible anywhere the user can see it. The event log's
+    "log" scope isn't tied to a specific search's group (see emit_log), so
+    no index needs threading through here.
     """
     url = config.local_base_url.rstrip("/") + "/chat/completions"
     headers = {}
@@ -441,31 +483,68 @@ def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        "stream": False,
+        "stream": True,
+        "stream_options": {"include_usage": True},
     }
-    try:
-        resp = httpx.post(url, json=payload, headers=headers,
-                          timeout=config.local_timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-    except httpx.HTTPError as exc:
-        print(f"  local LLM call to {url} failed: {exc}", file=sys.stderr)
-        return None
-    except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
-        print(f"  local LLM returned an unexpected response: {exc}",
-              file=sys.stderr)
-        return None
 
-    usage = data.get("usage") or {}
-    _add_usage(
-        {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-        },
-        0.0,
-    )
-    return content
+    for attempt in range(1, LOCAL_STREAM_RETRIES + 1):
+        attempt_t0 = time.monotonic()
+        reasoning_chunks = 0
+        try:
+            content_parts: list[str] = []
+            usage: dict = {}
+            with httpx.stream("POST", url, json=payload, headers=headers,
+                              timeout=config.local_timeout) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    chunk = line[len("data: "):]
+                    if chunk == "[DONE]":
+                        break
+                    event = json.loads(chunk)
+                    choices = event.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        if delta.get("content"):
+                            content_parts.append(delta["content"])
+                        elif delta.get("reasoning"):
+                            reasoning_chunks += 1
+                    elif "usage" in event:
+                        usage = event["usage"] or {}
+            content = "".join(content_parts)
+            if not content:
+                attempt_elapsed = time.monotonic() - attempt_t0
+                raise ValueError(
+                    f"stream ended with no content after {attempt_elapsed:.0f}s "
+                    f"({reasoning_chunks} reasoning chunk(s), 0 content chunks)"
+                )
+        except httpx.HTTPError as exc:
+            attempt_elapsed = time.monotonic() - attempt_t0
+            msg = (f"local LLM call failed (attempt {attempt}/{LOCAL_STREAM_RETRIES}, "
+                   f"{attempt_elapsed:.0f}s, {reasoning_chunks} reasoning chunk(s) "
+                   f"before failure): {exc}")
+            print(f"  {msg}", file=sys.stderr)
+            emit_log(msg, level="warn")
+            if attempt < LOCAL_STREAM_RETRIES:
+                time.sleep(LOCAL_STREAM_RETRY_DELAY_S)
+                continue
+            return None
+        except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
+            msg = f"local LLM returned an unexpected response (attempt {attempt}): {exc}"
+            print(f"  {msg}", file=sys.stderr)
+            emit_log(msg, level="warn")
+            return None
+
+        _add_usage(
+            {
+                "input_tokens": usage.get("prompt_tokens", 0),
+                "output_tokens": usage.get("completion_tokens", 0),
+            },
+            0.0,
+        )
+        return content
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +686,17 @@ def clean_one(job: dict) -> dict | None:
     return {"description_clean": clean or None}
 
 
+def _timed_clean_one(job: dict) -> tuple[dict | None, float]:
+    """Run clean_one, timing only its own execution (not queue-wait behind
+    other jobs in the pool) — used to report an honest per-call duration in
+    the run drawer's event log, since submission order alone would include
+    however long a job sat waiting for a free worker.
+    """
+    t0 = time.monotonic()
+    result = clean_one(job)
+    return result, time.monotonic() - t0
+
+
 def _retry_local_failures(jobs: list[dict], results: list, is_failure,
                           one_fn, max_workers: int, label: str,
                           index: int = 1) -> None:
@@ -652,7 +742,10 @@ def clean_jobs(jobs: list[dict], index: int = 1) -> None:
     Runs the pool via submit()/as_completed() rather than pool.map() so a
     "N of M" progress event can be emitted as each call finishes, driving the
     run drawer's live count — ``index`` ties those events to the right
-    per-email group.
+    per-email group. Each event-log line also reports that job's own call
+    duration (via _timed_clean_one), so slow-vs-fast variance is visible
+    without needing --log-model-calls (which only records the request, not
+    timing or the response).
     """
     print(f"Cleaning {len(jobs)} descriptions (parallel calls)...", flush=True)
     emit_log(f"Cleaning {len(jobs)} descriptions…", level="head", index=index)
@@ -661,19 +754,19 @@ def clean_jobs(jobs: list[dict], index: int = 1) -> None:
     results: list[dict | None] = [None] * len(jobs)
     done = 0
     with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
-        futures = {pool.submit(clean_one, job): i for i, job in enumerate(jobs)}
+        futures = {pool.submit(_timed_clean_one, job): i for i, job in enumerate(jobs)}
         for future in as_completed(futures):
             i = futures[future]
-            results[i] = future.result()
+            results[i], call_elapsed = future.result()
             done += 1
-            emit(scope="email", index=index, key="clean", status="active",
+            emit(scope="search", index=index, key="clean", status="active",
                  stat=f"{done} of {len(jobs)}")
             label = f"{jobs[i].get('title') or '?'} @ {jobs[i].get('company') or '?'}"
             if results[i] is None:
-                emit_log(f"clean failed · {label} ({done}/{len(jobs)})",
+                emit_log(f"clean failed · {label} ({done}/{len(jobs)}) · {call_elapsed:.0f}s",
                          level="warn", index=index)
             else:
-                emit_log(f"✓ cleaned {label} ({done}/{len(jobs)})",
+                emit_log(f"✓ cleaned {label} ({done}/{len(jobs)}) · {call_elapsed:.0f}s",
                          level="info", index=index)
     if config.llm_backend == "local":
         _retry_local_failures(jobs, results, lambda r: r is None, clean_one,
@@ -710,16 +803,18 @@ def check_setup() -> None:
     """Validate required user setup, raising SetupError on the first problem.
 
     The shared check for both entry points (CLI validate_setup and the web UI's
-    Run button) so a broken setup is caught before any work: the roles config
-    must load (≥1 role), the `claude` CLI must be on PATH (Pass 1 shells out to
-    it), profiles/resume.md must exist (every kept job is scored against it),
-    any profile file a role references must exist, and — on the local backend —
-    the server must be reachable and serving the configured model.
+    Run button) so a broken setup is caught before any work: the full config
+    must load (≥1 role, ≥1 linkedin_searches entry), the `claude` CLI must be
+    on PATH (Pass 1 shells out to it), profiles/resume.md must exist (every
+    kept job is scored against it), any profile file a role references must
+    exist, and — on the local backend — the server must be reachable and
+    serving the configured model.
     """
     try:
-        roles = load_roles()
+        config = load_config()
     except ValueError as exc:
         raise SetupError(f"Config error: {exc}")
+    roles = config.roles
     try:
         claude_executable()
     except FileNotFoundError as exc:
@@ -739,7 +834,6 @@ def check_setup() -> None:
             "the 'profile' key(s) to score those roles on the resume alone."
         )
 
-    config = load_config()
     if config.llm_backend == "local":
         _verify_local_llm(config)
 
@@ -813,6 +907,21 @@ def _verify_local_llm(config) -> None:
 WARMUP_TIMEOUT_S = 60
 WARMUP_ATTEMPTS = 3
 
+# _warm_local_llm's max_tokens=1 ping only forces the model weights into VRAM
+# — it doesn't exercise prefill/KV-cache cost for a real-sized prompt (real
+# descriptions run 5-13 KB, per this module's docstring), which is where the
+# very first real clean call was observed to time out on a cold local server.
+# _warm_up_clean_pass follows it with one real clean_one() call against a
+# similarly-sized synthetic description, retrying WARMUP_CLEAN_RETRIES times
+# with a WARMUP_CLEAN_RETRY_DELAY_S pause between attempts. Unlike the ping
+# warm-up, failure here is fatal (see _warm_up_clean_pass) — if the model
+# can't process a real-sized prompt after every retry, every real clean/
+# enrich call in the run would likely also fail, so we abort before spending
+# a browser scrape on a run that can't finish.
+WARMUP_CLEAN_RETRIES = 3
+WARMUP_CLEAN_RETRY_DELAY_S = 5
+_WARMUP_FAKE_DESCRIPTION = "We are looking for a Senior Software Engineer to join our team. " * 80
+
 
 def _warm_local_llm(config) -> None:
     """Fire one tiny generation so the local model loads before the timed passes.
@@ -856,6 +965,36 @@ def _warm_local_llm(config) -> None:
                   file=sys.stderr)
     emit_log("Local model warm-up failed — continuing (calls will retry)",
              level="warn")
+
+
+def _warm_up_clean_pass(config) -> None:
+    """Run one real clean_one() call against a realistically-sized fake job.
+
+    See the WARMUP_CLEAN_* constants above for why this exists on top of
+    _warm_local_llm. Retries WARMUP_CLEAN_RETRIES times with a
+    WARMUP_CLEAN_RETRY_DELAY_S pause between attempts; if every attempt
+    fails, aborts the whole run (sys.exit(1)) rather than proceeding to a
+    browser scrape whose clean/enrich passes would likely all fail the same
+    way. Local backend only.
+    """
+    fake_job = {"job_id": "warmup", "description_raw": _WARMUP_FAKE_DESCRIPTION}
+    for attempt in range(1, WARMUP_CLEAN_RETRIES + 1):
+        emit_log(f"Warm-up clean pass (attempt {attempt}/{WARMUP_CLEAN_RETRIES})…",
+                 level="head")
+        if clean_one(fake_job) is not None:
+            emit_log("Warm-up clean pass succeeded", level="good")
+            return
+        if attempt < WARMUP_CLEAN_RETRIES:
+            time.sleep(WARMUP_CLEAN_RETRY_DELAY_S)
+
+    msg = (f"Local model failed to clean a realistically-sized warm-up job "
+           f"after {WARMUP_CLEAN_RETRIES} attempts — aborting before Pass 1. "
+           f"Check the local server at {config.local_base_url} (model "
+           f"{config.local_model!r}) is healthy and [llm.local] timeout is "
+           f"generous enough for a full-size prompt.")
+    print(f"ERROR: {msg}", file=sys.stderr)
+    logging.getLogger("scout").error(msg)
+    sys.exit(1)
 
 
 def scoring_enabled() -> bool:
@@ -1028,7 +1167,7 @@ def enrich_one(job: dict) -> dict:
 
 def _emit_enrich_progress(index: int, done: int, total: int) -> None:
     """Emit the "N of M" live-count event for one completed enrich_one call."""
-    emit(scope="email", index=index, key="enrich", status="active",
+    emit(scope="search", index=index, key="enrich", status="active",
          stat=f"{done} of {total}")
 
 
@@ -1172,13 +1311,13 @@ Scrape run ID: {scrape_run_id}
 Follow the system prompt exactly. Scrape every job on page 1 into the download file.
 """
 
-    emit(scope="email", index=index, key="scrape", status="active")
+    emit(scope="search", index=index, key="scrape", status="active")
     emit_log("Scraping LinkedIn…", level="head", index=index)
     run_claude(SYSTEM_PROMPT_FILE, user_message)
 
     all_jobs = load_downloaded_jobs(scrape_run_id)
     scraped = len(all_jobs) if all_jobs else 0
-    emit(scope="email", index=index, key="scrape", status="done", stat=f"{scraped} scraped")
+    emit(scope="search", index=index, key="scrape", status="done", stat=f"{scraped} scraped")
     emit_log(f"Scraped {scraped} jobs", level="good", index=index)
 
     if all_jobs is None:
@@ -1195,16 +1334,16 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
         )
         print(f"WARNING: {msg}", file=sys.stderr)
         logging.getLogger("scout").warning(msg)
-        emit(scope="email", index=index, key="filter", status="done", stat="0 of 0 kept")
-        emit(scope="email", index=index, key="enrich", status="done", stat="0 kept")
+        emit(scope="search", index=index, key="filter", status="done", stat="0 of 0 kept")
+        emit(scope="search", index=index, key="enrich", status="done", stat="0 kept")
         return []
 
     # Deterministic pre-filters — cheap, and done BEFORE enrichment so we never
     # spend a Sonnet call on a job we're going to drop anyway.
-    emit(scope="email", index=index, key="filter", status="active")
+    emit(scope="search", index=index, key="filter", status="active")
     existing = set(get_existing_job_ids())
     survivors = apply_deterministic_filters(all_jobs, existing)
-    emit(scope="email", index=index, key="filter", status="done",
+    emit(scope="search", index=index, key="filter", status="done",
          stat=f"{len(survivors)} of {len(all_jobs)} kept")
     emit_log(f"Filter: {len(survivors)} of {len(all_jobs)} kept",
              level="info", index=index)
@@ -1212,23 +1351,23 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
     print(f"{len(all_jobs)} scraped; {len(survivors)} survive deterministic "
           f"filters (already-in-DB / applied / closed / excluded companies).")
     if not survivors:
-        emit(scope="email", index=index, key="enrich", status="done", stat="0 kept")
+        emit(scope="search", index=index, key="enrich", status="done", stat="0 kept")
         return []
 
     # Description cleaning: strip EEO boilerplate / benefits tail before Sonnet.
-    emit(scope="email", index=index, key="clean", status="active")
+    emit(scope="search", index=index, key="clean", status="active")
     clean_jobs(survivors, index)
-    emit(scope="email", index=index, key="clean", status="done",
+    emit(scope="search", index=index, key="clean", status="done",
          stat=f"{len(survivors)} cleaned")
 
     # Per-job enrichment: role_type (configured roles / Other) + tags + scoring.
-    emit(scope="email", index=index, key="enrich", status="active")
+    emit(scope="search", index=index, key="enrich", status="active")
     enrich_jobs(survivors, index)
 
     # Keep only the configured role types; drop Other (and any that failed to enrich).
     role_names = {role.name for role in load_roles()}
     kept = [j for j in survivors if j.get("role_type") in role_names]
-    emit(scope="email", index=index, key="enrich", status="done",
+    emit(scope="search", index=index, key="enrich", status="done",
          stat=f"{len(kept)} kept")
     print(f"Enriched {len(survivors)}; kept {len(kept)} "
           f"({'/'.join(sorted(role_names))}), "
@@ -1242,23 +1381,20 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
 
 def process_url(
     url: str,
-    email_subject: str = "Manual run",
-    email_date: str = "",
+    search_name: str = "Manual run",
     index: int = 1,
     total: int = 1,
 ) -> bool:
     """Create a scrape run, scrape + enrich + filter, and save results.
 
-    ``index``/``total`` position this email within the run for UI progress.
-    Returns True if the email was fully processed (even if 0 jobs were saved),
-    False if the run was aborted (e.g. the scrape timed out) so the caller can
-    leave the source email unread for a later retry.
+    ``index``/``total`` position this search within the run for UI progress.
+    Returns True if the search was fully processed (even if 0 jobs were
+    saved), False if the run was aborted (e.g. the scrape timed out).
     """
     print(f"\nURL  : {url[:80]}...")
 
     run_id = create_scrape_run(
-        email_subject=email_subject,
-        email_date=email_date,
+        search_name=search_name,
         linkedin_url=url,
         role_type=None,  # a run no longer has a single role; role is per-job
     )
@@ -1267,22 +1403,22 @@ def process_url(
     try:
         jobs = run_scrape(url, run_id, index)
     except TimeoutError as exc:
-        emit(scope="email", index=index, key="scrape", status="error", stat="timed out")
+        emit(scope="search", index=index, key="scrape", status="error", stat="timed out")
         print(f"\nERROR: {exc}. Run aborted — nothing saved.", file=sys.stderr)
         logging.getLogger("scout").error("Scrape run %s aborted: %s", run_id, exc)
         print_token_summary()
         return False
 
-    emit(scope="email", index=index, key="save", status="active")
+    emit(scope="search", index=index, key="save", status="active")
     if not jobs:
-        emit(scope="email", index=index, key="save", status="done", stat="0 saved")
+        emit(scope="search", index=index, key="save", status="done", stat="0 saved")
         print("No jobs to save.")
         logging.getLogger("scout").info("Scrape run %s: no jobs to save", run_id)
         print_token_summary()
         return True
 
     result = save_jobs(run_id, jobs)
-    emit(scope="email", index=index, key="save", status="done",
+    emit(scope="search", index=index, key="save", status="done",
          stat=f"{result['saved']} saved, {result['reposts_detected']} reposts")
     emit_log(f"Saved {result['saved']} jobs · {result['reposts_detected']} reposts",
              level="good", index=index)
@@ -1294,33 +1430,6 @@ def process_url(
     return True
 
 
-def process_email(email: dict, index: int = 1, total: int = 1) -> None:
-    """Run a full scrape for a single Gmail alert email."""
-    url = email.get("see_all_jobs_url")
-    if not url:
-        print(f"No URL found in email: {email.get('subject')}")
-        emit(scope="email", index=index, key="scrape", status="error", stat="no URL")
-        return
-
-    print(f"\nSubject : {email.get('subject')}")
-    processed = process_url(
-        url=url,
-        email_subject=email.get("subject", ""),
-        email_date=email.get("date", ""),
-        index=index,
-        total=total,
-    )
-
-    # Only clear the email from the unread queue once its jobs are in the DB, so
-    # an aborted run leaves it to be picked up again next time.
-    message_id = email.get("message_id")
-    if processed and message_id:
-        try:
-            mark_email_read(message_id)
-        except Exception as exc:  # marking read must never fail the run
-            print(f"  WARN: could not mark email {message_id} read: {exc}", file=sys.stderr)
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1330,8 +1439,7 @@ def main() -> None:
     global _log_model_calls
 
     parser = argparse.ArgumentParser(description="Scout job agent runner")
-    parser.add_argument("--url", help="Scrape a specific LinkedIn URL (skips Gmail)")
-    parser.add_argument("--max-emails", type=int, default=5, help="Max Gmail emails to process")
+    parser.add_argument("--url", help="Scrape one ad-hoc LinkedIn URL, ignoring config")
     parser.add_argument("--log-model-calls", action="store_true",
                         help="Log every Claude call (model, system prompt, user "
                              "message) to model_calls.log in the configured log dir")
@@ -1342,7 +1450,7 @@ def main() -> None:
     _log_model_calls = args.log_model_calls
     init_db()
     log.info("Run started (source=%s, model call logging %s)",
-             "manual URL" if args.url else "gmail",
+             "manual URL" if args.url else "config",
              "on" if _log_model_calls else "off")
 
     # Tell the drawer which backend/models are driving this run. Pass 1 (the
@@ -1359,47 +1467,27 @@ def main() -> None:
 
     # Load/warm the local model now (before Pass 1) rather than letting the
     # first clean call eat the multi-minute cold start — see _warm_local_llm.
+    # _warm_up_clean_pass follows with a real, realistically-sized clean call
+    # so a server that can't handle full-size prompts fails here, not silently
+    # mid-run — see its docstring.
     if is_local:
         _warm_local_llm(config)
+        _warm_up_clean_pass(config)
 
     emit(scope="global", key="start", status="done")
 
     if args.url:
-        emit(scope="global", key="gmail", status="skipped", stat="manual URL")
         process_url(url=args.url, index=1, total=1)
         log.info("Run finished (1 URL)")
         emit(scope="run", status="done")
         return
 
-    emit(scope="global", key="gmail", status="active")
-    try:
-        emails = get_job_alert_emails(max_results=args.max_emails)
-    except RefreshError:
-        emit(scope="global", key="gmail", status="error", stat="auth expired",
-             auth_required=True)
-        log.error("Gmail authentication expired — reauth required")
-        print("Gmail token has expired or been revoked. "
-              "Use the Reauthenticate button in the run drawer.", file=sys.stderr)
-        sys.exit(1)
-    if not emails:
-        emit(scope="global", key="gmail", status="done", stat="0 emails", emails=[])
-        print("No unread job alert emails found.")
-        log.info("Run finished (no unread job alert emails)")
-        emit(scope="run", status="done")
-        return
+    searches = config.linkedin_searches
+    for i, search in enumerate(searches, 1):
+        emit_log(f"Search {i}/{len(searches)}: {search.name}", level="head", index=i)
+        process_url(url=search.url, search_name=search.name, index=i, total=len(searches))
 
-    subjects = [(e.get("subject") or "(no subject)")[:80] for e in emails]
-    emit(scope="global", key="gmail", status="done",
-         stat=f"{len(emails)} email{'s' if len(emails) != 1 else ''}", emails=subjects)
-    emit_log(f"Gmail: {len(emails)} email{'s' if len(emails) != 1 else ''} matched "
-             f"label “{config.gmail_label}”", level="info")
-
-    for i, email in enumerate(emails, 1):
-        emit_log(f"Email {i}/{len(emails)}: {email.get('subject') or '(no subject)'}",
-                 level="head", index=i)
-        process_email(email, index=i, total=len(emails))
-
-    log.info("Run finished (%d email%s)", len(emails), "s" if len(emails) != 1 else "")
+    log.info("Run finished (%d search%s)", len(searches), "es" if len(searches) != 1 else "")
     emit(scope="run", status="done")
 
 

@@ -8,7 +8,12 @@ copyable example):
   role — with zero roles the keep/drop decision is undefined. Drives the
   prompt's role definitions, per-role scoring profiles, and the UI filter
   buttons and chip colors.
-- ``[gmail]`` — ``label``: the Gmail label the job-alert emails live under.
+- ``[[linkedin_searches]]`` — the LinkedIn saved-search URLs Scout scrapes
+  every run. At least one is required. Each entry has ``name`` (a short
+  alias shown in the UI/logs in place of the raw URL, which can run into
+  the hundreds of characters) and ``url`` (the LinkedIn jobs-search URL,
+  copied straight from the browser address bar after setting up the
+  search/alert on LinkedIn).
 - ``[filters]`` — ``exclude_companies``: companies dropped before any LLM
   call (and again at save time). May be empty.
 - ``[scoring]`` — ``fit_weight``/``criteria_weight`` (must sum to 1) and
@@ -59,11 +64,11 @@ DEFAULT_DOWNLOAD_DIR = "~/Downloads"
 VALID_LLM_BACKENDS = ("claude", "local")
 # Keys the local-backend request builder owns; a user's per-pass param table
 # (see _parse_local_params) may not set these, so a config typo can't clobber
-# the messages/model/stream the pipeline controls. Everything else is fair game:
-# the code no longer forces a temperature (the server default applies unless the
-# table sets one), and only response_format defaults to JSON mode, which a table
-# entry may still override.
-RESERVED_LOCAL_PARAM_KEYS = ("model", "messages", "stream")
+# the messages/model/stream/stream_options the pipeline controls. Everything
+# else is fair game: the code no longer forces a temperature (the server
+# default applies unless the table sets one), and only response_format
+# defaults to JSON mode, which a table entry may still override.
+RESERVED_LOCAL_PARAM_KEYS = ("model", "messages", "stream", "stream_options")
 # Read timeout (seconds) for a local-LLM clean/enrich call when [llm.local]
 # omits `timeout`. Deliberately tight: a warm local model answers a clean/enrich
 # call in well under a minute, so a call still running past this is a stall, not
@@ -104,11 +109,24 @@ ROLE_COLOR_PALETTE = [
 
 
 @dataclass(frozen=True)
+class LinkedInSearch:
+    """One named LinkedIn saved-search URL Scout scrapes every run.
+
+    ``name`` is the short alias shown in the UI/logs in place of the raw
+    URL (which can run into the hundreds of characters). ``url`` is the
+    LinkedIn jobs-search URL to scrape.
+    """
+
+    name: str
+    url: str
+
+
+@dataclass(frozen=True)
 class Config:
     """The full validated user config (see the module docstring)."""
 
     roles: list[Role]
-    gmail_label: str
+    linkedin_searches: list[LinkedInSearch]
     exclude_companies: list[str]
     fit_weight: float
     criteria_weight: float
@@ -155,6 +173,40 @@ def _parse_roles(data: dict) -> list[Role]:
         profile = entry.get("profile")
         roles.append(Role(name, definition, str(profile) if profile else None))
     return roles
+
+
+def _parse_linkedin_searches(data: dict) -> list[LinkedInSearch]:
+    """Parse and validate the [[linkedin_searches]] entries out of the raw TOML data."""
+    entries = data.get("linkedin_searches", [])
+    if not entries:
+        raise ValueError(
+            "profiles/config.toml defines no [[linkedin_searches]] — at least "
+            "one saved-search URL is required. See profiles/README.md for an "
+            "example."
+        )
+
+    searches: list[LinkedInSearch] = []
+    seen: set[str] = set()
+    for i, entry in enumerate(entries, 1):
+        name = str(entry.get("name") or "").strip()
+        url = str(entry.get("url") or "").strip()
+        if not name or not url:
+            raise ValueError(
+                f"profiles/config.toml: [[linkedin_searches]] entry {i} needs "
+                f"a non-empty 'name' and 'url'"
+            )
+        if not url.startswith("https://www.linkedin.com/"):
+            raise ValueError(
+                f"profiles/config.toml: [[linkedin_searches]] entry {i} 'url' "
+                "must be a https://www.linkedin.com/ URL"
+            )
+        if name.lower() in seen:
+            raise ValueError(
+                f"profiles/config.toml: duplicate linkedin_searches name '{name}'"
+            )
+        seen.add(name.lower())
+        searches.append(LinkedInSearch(name, url))
+    return searches
 
 
 def _require_number(section: dict, section_name: str, key: str) -> float:
@@ -296,14 +348,7 @@ def load_config() -> Config:
     data = tomllib.loads(CONFIG_FILE.read_text())
 
     roles = _parse_roles(data)
-
-    gmail = data.get("gmail")
-    if not isinstance(gmail, dict) or not str(gmail.get("label") or "").strip():
-        raise ValueError(
-            "profiles/config.toml: a [gmail] section with a non-empty 'label' "
-            "is required"
-        )
-    gmail_label = str(gmail["label"]).strip()
+    linkedin_searches = _parse_linkedin_searches(data)
 
     filters = data.get("filters")
     if not isinstance(filters, dict) or "exclude_companies" not in filters:
@@ -370,7 +415,7 @@ def load_config() -> Config:
 
     return Config(
         roles=roles,
-        gmail_label=gmail_label,
+        linkedin_searches=linkedin_searches,
         exclude_companies=exclude_companies,
         fit_weight=fit_weight,
         criteria_weight=criteria_weight,

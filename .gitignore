@@ -1,4 +1,6 @@
 .idea/
+# Leftover from the old Gmail OAuth integration (removed) — kept ignored as a
+# safety net in case stale credential/token files still exist on disk.
 credentials.json
 token.json
 Pipfile.lock
