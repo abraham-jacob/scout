@@ -7,8 +7,9 @@ doesn't have to reverse-engineer them from the diff history.
 
 ## Before you start
 
-- Read the [README](README.md) first — architecture, setup, and the three-pass
-  pipeline design are covered there.
+- Read the [README](https://github.com/abraham-jacob/scout/blob/main/README.md)
+  first — architecture, setup, and the three-pass pipeline design are covered
+  there.
 - For anything non-trivial (a new feature, a behavior change, a new
   dependency), open an issue or start a discussion before writing code. It's a
   much cheaper conversation before the PR than after.
@@ -23,9 +24,9 @@ blocked, and the branch can't be deleted. There is no situation where you
 should push directly to `main`.
 
 Every push and every PR against `main` automatically runs the test suite via
-[GitHub Actions](.github/workflows/tests.yml) — that's the "Tests" and
-"Coverage" badges at the top of the README. A PR with a failing run is
-visible immediately in the PR's checks tab.
+[GitHub Actions](https://github.com/abraham-jacob/scout/blob/main/.github/workflows/tests.yml)
+— that's the "Tests" and "Coverage" badges at the top of the README. A PR
+with a failing run is visible immediately in the PR's checks tab.
 
 1. **Branch from `main`.** Never commit on `main` directly.
    ```bash
@@ -50,9 +51,10 @@ pipenv install --dev
 
 You'll need your own `profiles/config.toml`, `profiles/resume.md`, Gmail OAuth
 credentials, and a logged-in Chrome/LinkedIn session to run the app
-end-to-end — see the README's [Quick Start](README.md#-quick-start). None of
-that is required just to read the code, run the test suite, or work on a
-non-pipeline change (e.g. the web UI, database layer, or config parsing).
+end-to-end — see the [Configuration guide](https://abraham-jacob.github.io/scout/getting-started/).
+None of that is required just to read the code, run the test suite, or work
+on a non-pipeline change (e.g. the web UI, database layer, or config
+parsing).
 
 ## Code conventions
 
@@ -69,7 +71,8 @@ non-pipeline change (e.g. the web UI, database layer, or config parsing).
 - **Don't add abstractions ahead of need.** A bug fix doesn't need a
   refactor bundled in; a one-off script doesn't need a generic framework.
   Three similar lines beat a premature abstraction.
-- Read the module docstring at the top of [`agent/runner.py`](agent/runner.py)
+- Read the module docstring at the top of
+  [`agent/runner.py`](https://github.com/abraham-jacob/scout/blob/main/agent/runner.py)
   before touching the pipeline — it's the map for the whole three-pass
   architecture (Pass 1 browser scrape, Pass 2 clean, Pass 3 enrich) and the
   reasoning behind several non-obvious design choices (the blob-download
@@ -97,10 +100,25 @@ so a clean local run means a clean CI run. Coverage output lands in
   project root to `sys.path`, so import as `from app...` / `from agent...`.
 - If you're changing a prompt (`agent/clean_prompt.md` or
   `agent/enrichment_prompt.md`), also see the eval harnesses in
-  [`scripts/`](scripts/) — `clean_prompt_test.py` and `enrich_prompt_test.py`
+  [`scripts/`](https://github.com/abraham-jacob/scout/tree/main/scripts) —
+  `clean_prompt_test.py` and `enrich_prompt_test.py`
   run the real prompt against captured job descriptions and use an
   LLM-as-judge to score quality. A prompt change with no eval delta is not
   well-tested.
+
+## Docs
+
+The documentation site (built with MkDocs Material, deployed to GitHub
+Pages) lives under `docs/`, configured by `mkdocs.yml` at the repo root.
+
+```bash
+pipenv install --dev              # picks up mkdocs / mkdocs-material
+pipenv run mkdocs serve           # http://127.0.0.1:8000, live reload
+pipenv run mkdocs build --strict  # same check CI runs — do this before pushing docs changes
+```
+
+`mkdocs serve` defaults to port 8000, the same as `uvicorn app.main:app` —
+if you need both running at once, use `pipenv run mkdocs serve -a 127.0.0.1:8001`.
 
 ## Commit messages
 
@@ -121,4 +139,4 @@ before pasting.
 ## License
 
 By contributing, you agree that your contributions will be licensed under the
-project's [MIT License](LICENSE).
+project's [MIT License](https://github.com/abraham-jacob/scout/blob/main/LICENSE).

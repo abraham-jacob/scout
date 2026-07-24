@@ -1,0 +1,60 @@
+site_name: Scout
+site_description: An AI agent that scrapes, cleans, classifies, and scores your LinkedIn job alerts
+site_url: https://abraham-jacob.github.io/scout/
+repo_url: https://github.com/abraham-jacob/scout
+repo_name: abraham-jacob/scout
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: images/banner_dark.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      base_path: ["."]
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Configuration: getting-started.md
+  - Using the Web UI: web-ui.md
+  - OpenAI-compatible Backend: openai-compatible-backend.md
+  - Architecture: architecture.md
+  - Contributing: contributing.md
+  - FAQ / Troubleshooting: faq.md

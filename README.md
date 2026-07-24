@@ -13,8 +13,11 @@
 [![Branch protection: enabled](https://img.shields.io/badge/branch%20protection-enabled-blue.svg)](https://github.com/abraham-jacob/scout/branches)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 [![Claude](https://img.shields.io/badge/built%20with-Claude-d97757.svg)](https://claude.com/claude-code)
+[![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue.svg)](https://abraham-jacob.github.io/scout/)
 
 **An AI agent that reads your LinkedIn job alerts, scrapes every posting behind them, and tells you which ones are actually worth your time.**
+
+📖 **[Full documentation](https://abraham-jacob.github.io/scout/)** — setup, configuration reference, architecture, and troubleshooting.
 
 LinkedIn job search results are a firehose: dozens of postings a day, half of them reposts, mismatches, or roles you already applied to. Scout drinks from the firehose for you. It drives a real Chrome session to scrape **every** job behind each of your saved LinkedIn searches (including the ones LinkedIn never renders), cleans the boilerplate out of each description, classifies and scores every role against *your* resume and criteria, and files the survivors into a local database with a clean web UI — each job tagged, summarized, and scored out of 100.
 
@@ -29,7 +32,7 @@ Everything runs on your machine. Your resume, your criteria, and your job-search
 - [✨ Features](#-features)
 - [📋 Requirements](#-requirements)
 - [⚡ Quick Start](#-quick-start)
-- [🖥️ Local LLM Backend](#-local-llm-backend)
+- [🔌 OpenAI-compatible Backend](#-openai-compatible-backend)
 - [⚙️ Configuration Reference](#-configuration-reference)
 - [🔧 Engineering Notes](#-engineering-notes)
 - [🧪 Testing & Evals](#-testing--evals)
@@ -116,6 +119,7 @@ Scout is a personal, single-user tool. It expects:
 | Requirement | Why |
 |---|---|
 | **Python 3.12** + [pipenv](https://pipenv.pypa.io/) | Runtime & dependency management |
+| **Git** | To clone the repo |
 | **Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
 | **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at a local model |
 | **A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |
@@ -158,7 +162,7 @@ dealbreaker_cap = 30.0           # max score when a dealbreaker is present
 dir = "logs"
 
 [llm]
-backend = "claude"              # or "local" — see "Local LLM backend" below
+backend = "claude"              # or "local" — see "OpenAI-compatible Backend" below
 max_workers = 4                 # Pass 2/3 parallelism
 ```
 
@@ -183,9 +187,9 @@ pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one ad-
 
 <br>
 
-## 🖥️ Local LLM Backend
+## 🔌 OpenAI-compatible Backend
 
-Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any OpenAI-compatible server instead of the Claude API. Pass 1 always runs on Claude, because it's an agentic browser task a local text model can't do.
+Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any **OpenAI-compatible** server instead of the Claude API. That's broader than "local": [Ollama](https://ollama.com) running on your own box is the common case (free, fully private), but the same config also works with a remote OpenAI-compatible API (e.g. [Kimi](https://www.moonshot.ai/)) if you'd rather not run a server yourself. Pass 1 always runs on Claude, because it's an agentic browser task a text model can't do.
 
 ```toml
 [llm]
@@ -204,40 +208,19 @@ reasoning_effort = "low"        # merged verbatim into the API call
 reasoning_effort = "medium"
 ```
 
-The local path is built for imperfect hardware: Scout fires a warm-up request at run start so the model loads *before* the timed passes (with its own generous timeout and retries), keeps per-call timeouts tight so a stalled generation fails fast, and gives every failed call one parallel retry pass before falling back gracefully. Setup validation pings the server and verifies the model id before any browser work starts.
+This path is built for imperfect hardware: Scout fires a warm-up request at run start so a self-hosted model loads *before* the timed passes (with its own generous timeout and retries), keeps per-call timeouts tight so a stalled generation fails fast, and gives every failed call one parallel retry pass before falling back gracefully. Setup validation pings the server and verifies the model id before any browser work starts.
 
 <br>
 
 ## ⚙️ Configuration Reference
 
-All user configuration lives in `profiles/config.toml`, validated loudly at startup — no hidden defaults, so a typo can't silently change behavior.
-
-| Section | Required | What it controls |
-|---|---|---|
-| `[[roles]]` | ✅ (≥1) | The role types jobs are classified into; drives prompts, scoring profiles, and UI filters |
-| `[[linkedin_searches]]` | ✅ (≥1) | Named LinkedIn saved-search URLs scraped every run |
-| `[filters]` | ✅ | Companies to drop before any LLM call |
-| `[scoring]` | ✅ | Fit/criteria weights and the dealbreaker score cap |
-| `[logging]` | ✅ | Log directory (daily app log + opt-in model-call log) |
-| `[llm]` | ✅ | Backend (`claude` / `local`) and Pass 2/3 parallelism |
-| `[llm.local]` | when local | Server URL, model, API key, timeout, per-pass params |
-| `[scrape]` | optional | Browser download folder (defaults to `~/Downloads`) |
+All user configuration lives in `profiles/config.toml`, validated loudly at startup — no hidden defaults, so a typo can't silently change behavior. Required sections cover roles, LinkedIn searches, filters, scoring, logging, and the LLM backend; see the full [Configuration reference](https://abraham-jacob.github.io/scout/getting-started/) in the docs for every field.
 
 <br>
 
 ## 🔧 Engineering Notes
 
-The parts of this project that were genuinely interesting to build:
-
-**Getting 13 KB job descriptions out of a browser extension that blocks large returns.** The Claude in Chrome extension's privacy filter rejects large `javascript_tool` return values — and a page of job descriptions is far too big. Scout's scrape agent instead collects the batch in the page as `window.__jobs`, triggers a **blob download** of it as `scout_<run_id>.json`, and returns only a one-line status through the extension. The orchestrator polls the Downloads folder, reads the file, and deletes it. No shell steps anywhere in the handoff, so it works identically on Windows, macOS, and Linux.
-
-**Scraping the API, not the DOM.** LinkedIn virtualizes its job list — most cards on a 25-job page never render, and DOM scraping misses them. Scout hits LinkedIn's internal Voyager job-postings API from inside your logged-in session instead, getting every field for every job in one batch: full description, apply URL, applied status, and listing state. Salary isn't in the API, so it's regex-parsed from the description text.
-
-**Spending tokens where judgment lives.** Every architectural seam exists to avoid paying Sonnet prices for mechanical work: deterministic filters run before any LLM call; the scrape and clean passes run on Haiku; cleaning strips boilerplate *specifically so the Sonnet enrichment pass reads fewer input tokens*; and the parallel enrichment wave is preceded by one serial call plus a two-second pause — warming the Anthropic prompt cache so the parallel calls read the large shared system prompt from cache instead of each paying to write it. Every run prints its exact token usage and cost when it finishes.
-
-**A subprocess progress protocol.** The web UI launches the pipeline as a subprocess and folds its stdout into live UI state: the runner emits `SCOUT_PROGRESS {json}` sentinel lines for every state change — pass transitions, per-job completions, log lines, which backend and models are active — and the FastAPI side reduces them into the run drawer that HTMX re-renders every second. Per-step timers, live *N of M* counts, and an honest event log (a failed call logs as a failure and its retry as a retry, not as silent success).
-
-**Failing loudly, recovering quietly.** Config validation raises on the first problem instead of defaulting; setup checks verify the Claude CLI, resume, profile files, and local-LLM reachability before any browser work starts; each subprocess has a hard wall-clock kill; local-LLM calls get tight timeouts, one retry pass, and graceful fallbacks (a job that fails cleaning proceeds with its raw description rather than being dropped).
+A few of the parts that were genuinely interesting to build: getting 13 KB job descriptions out of a browser extension that blocks large tool returns, scraping LinkedIn's internal API instead of its DOM, and spending LLM tokens only where judgment actually lives. Full writeup in the [Architecture docs](https://abraham-jacob.github.io/scout/architecture/).
 
 <br>
 

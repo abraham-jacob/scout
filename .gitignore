@@ -1,4 +1,5 @@
 .idea/
+.mcp.json
 # Leftover from the old Gmail OAuth integration (removed) — kept ignored as a
 # safety net in case stale credential/token files still exist on disk.
 credentials.json
@@ -13,6 +14,7 @@ logs/
 /htmlcov/
 /junit_xml_test_report.xml
 .coverage
+/site/
 mockups/
 # Personal match-scoring artifacts (never commit)
 profiles/*
