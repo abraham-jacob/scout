@@ -58,3 +58,12 @@ nav:
   - Architecture: architecture.md
   - Contributing: contributing.md
   - FAQ / Troubleshooting: faq.md
+
+extra:
+  social:
+    - icon: fontawesome/solid/mug-saucer
+      link: https://buymeacoffee.com/jacob.abraham
+      name: Buy me a coffee
+    - icon: simple/kofi
+      link: https://ko-fi.com/jacobabraham
+      name: Support me on Ko-fi

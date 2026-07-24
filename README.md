@@ -14,6 +14,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 [![Claude](https://img.shields.io/badge/built%20with-Claude-d97757.svg)](https://claude.com/claude-code)
 [![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue.svg)](https://abraham-jacob.github.io/scout/)
+[![Buy Me a Coffee](https://img.shields.io/badge/-Buy%20me%20a%20coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacob.abraham)
+<a href="https://ko-fi.com/jacobabraham"><img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" alt="ko-fi" height="20"></a>
 
 **An AI agent that reads your LinkedIn job alerts, scrapes every posting behind them, and tells you which ones are actually worth your time.**
 
@@ -38,6 +40,7 @@ Everything runs on your machine. Your resume, your criteria, and your job-search
 - [🧪 Testing & Evals](#-testing--evals)
 - [💰 Costs](#-costs)
 - [⚠️ Limitations & Responsible Use](#-limitations--responsible-use)
+- [❤️ Support This Project](#-support-this-project)
 - [📄 License](#-license)
 
 <br>
@@ -250,6 +253,17 @@ With the Claude backend, a run costs what the models cost: Haiku for the scrape 
 - **Personal use, by design.** Scout automates *your own* browsing of *your own* saved searches, in *your own* logged-in Chrome session — one page of results per configured search, no crawling, no scale. Automated access may still conflict with LinkedIn's Terms of Service; understand them and use your judgment. This project is not affiliated with LinkedIn.
 - **Single-user, local-only.** The web UI has no authentication and binds to localhost; run state lives in memory. Don't expose it to a network.
 - **The browser is busy during Pass 1.** The scrape drives a real Chrome tab; grab a coffee — the run drawer will tell you exactly what's happening.
+
+<br>
+
+## ❤️ Support This Project
+
+Scout is free, open source, and built on nights and weekends. If it helped you land your next role (or just saved you from scrolling past EEO boilerplate one more time), consider buying me a coffee — it genuinely helps keep projects like this maintained.
+
+<a href="https://www.buymeacoffee.com/jacob.abraham" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+<a href="https://ko-fi.com/jacobabraham" target="_blank"><img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" alt="Support me on Ko-fi" style="height: 60px !important;border: 0px;" ></a>
+
+Made with ❤️ by [Jacob Abraham](https://github.com/abraham-jacob).
 
 <br>
 

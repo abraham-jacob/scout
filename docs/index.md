@@ -101,5 +101,11 @@ you should hand to an agent. So I did.
 
 ---
 
+Made with ❤️ by Jacob Abraham. If Scout helped you land your next role,
+consider supporting the project ☕.
+
+<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="jacob.abraham" data-color="#FFDD00" data-emoji=""  data-font="Cookie" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#000000" data-coffee-color="#ffffff" ></script>
+<a href="https://ko-fi.com/jacobabraham" target="_blank"><img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" alt="Support me on Ko-fi" style="height: 36px;border: 0px;vertical-align: middle;" ></a>
+
 [Source on GitHub](https://github.com/abraham-jacob/scout) ·
 [MIT License](https://github.com/abraham-jacob/scout/blob/main/LICENSE) © 2026 Jacob Abraham
