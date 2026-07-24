@@ -1,6 +1,6 @@
 # FAQ / Troubleshooting
 
-## Pass 1 hangs / never finishes
+## :simple-googlechrome:{ .chrome } Pass 1 hangs / never finishes
 
 Check Chrome's download settings: *Settings → Downloads → "Ask where to save
 each file before downloading"* must be **off**. Pass 1 hands scraped job data
@@ -33,11 +33,11 @@ what gets kept. See [`[[roles]]`](getting-started.md) in the config reference.
 Yes, by design. Scout is a single-user, local-only app: your resume,
 criteria, and scraped job data live in a local DuckDB file and never leave
 your machine — except as prompts to whichever LLM backend you've configured
-(the Claude API, or a fully local model via Ollama, which never sends
+(the :simple-claude:{ .claude } Claude API, or a fully local model via :simple-ollama: Ollama, which never sends
 anything over the network at all). The web UI has no authentication and
 binds to localhost; don't expose it to a network.
 
-## Does this violate LinkedIn's Terms of Service?
+## :fontawesome-brands-linkedin:{ .linkedin } Does this violate LinkedIn's Terms of Service?
 
 Scout automates *your own* browsing of *your own* saved searches, in *your
 own* logged-in Chrome session — one page of results per configured search,

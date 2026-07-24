@@ -13,6 +13,8 @@
   --md-typeset-a-color: #1467c9;
   --st-border-color: #0000001f;
   --st-stripe-color: #00000009;
+  --st-heading-accent: #b7791f;
+  --st-heading-accent--light: #c99947;
 }
 
 [data-md-color-scheme="slate"] {
@@ -26,10 +28,59 @@
   --md-typeset-a-color: #6fc3ff;
   --st-border-color: #81bbdf40;
   --st-stripe-color: #81bbdf14;
+  --st-heading-accent: #f0b429;
+  --st-heading-accent--light: #f6cd6b;
 }
 
+/* Header
+   ------
+   Brand wordmark (theme.logo = banner_dark.svg) + a tagline, on a gradient
+   recolored to match the app's ▶ Run Scout button: orange→rose in light,
+   indigo→violet in dark. */
 .md-header {
   box-shadow: 0 0 0.2rem #0000001a, 0 0.2rem 0.4rem #00000026;
+}
+
+/* Size the wordmark to the bar. */
+.md-logo img {
+  height: 1.5rem !important;
+  width: auto;
+}
+
+/* Tagline after the wordmark, with a subtle divider. */
+.md-logo {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center;
+  width: max-content;
+}
+
+.md-logo::after {
+  content: "AI Agent for LinkedIn job curation";
+  margin-left: 0.6rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.32);
+  font-family: "Inter", sans-serif;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: #fff;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+
+/* The wordmark already says "Scout" — hide the duplicate site-name/page-title
+   text, but keep .md-header__title itself so its flex-grow still pushes the
+   search/palette controls to the right edge. */
+.md-header__title {
+  visibility: hidden;
+}
+
+/* Tagline would crowd small screens — drop it there. */
+@media screen and (max-width: 60rem) {
+  .md-logo::after {
+    display: none;
+  }
 }
 
 /* Fonts
@@ -48,6 +99,11 @@
   letter-spacing: -0.01em;
 }
 
+/* Hide logo and site name from the left-hand menu */
+.md-nav--primary > .md-nav__title {
+  display: none;
+}
+
 .md-typeset h1 {
   font-weight: 800;
 }
@@ -59,12 +115,44 @@
 }
 
 .md-typeset h3,
-.md-typeset h4 {
+.md-typeset h4,
+.md-typeset h5 {
   font-weight: 600;
+}
+
+/* Material gives h4/h5 no real size bump over body text (h5 is just
+   uppercase body text) — restore a visible size hierarchy, and drop the
+   uppercase transform since our h5s contain inline `[config.keys]`.
+   Material's default margins are also symmetric (same space above and
+   below), which reads as "still part of the same section" rather than a
+   break. Asymmetric spacing (big gap above, small gap below), an accent
+   color, and a left bar give each subsection a clear, callout-like break —
+   h5 uses the lighter variant + a thinner bar to signal it's one level
+   deeper than h4. */
+.md-typeset h4 {
+  font-size: 1.1em;
+  margin: 2.5em 0 0.75em;
+  padding-left: 0.75rem;
+  color: var(--st-heading-accent);
+  border-left: 4px solid var(--st-heading-accent);
+}
+
+.md-typeset h5 {
+  font-size: 1em;
+  text-transform: none;
+  margin: 2em 0 0.6em;
+  padding-left: 0.6rem;
+  color: var(--st-heading-accent--light);
+  border-left: 2px solid var(--st-heading-accent--light);
 }
 
 .md-typeset code {
   border-radius: 0.2rem;
+}
+
+.md-typeset pre > code {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Links
@@ -84,9 +172,15 @@
 .md-typeset table:not([class]) {
   border: 1px solid var(--st-border-color);
   border-radius: 0.5rem;
-  box-shadow: 0 0.1rem 0.4rem #00000014;
+  box-shadow: 0 0.2rem 0.6rem #0000001a;
   overflow: hidden;
   font-size: 1em;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.md-typeset table:not([class]):hover {
+  box-shadow: 0 0.5rem 1.2rem #00000033;
+  transform: translateY(-2px);
 }
 
 .md-typeset table:not([class]) th {
@@ -101,6 +195,11 @@
 .md-typeset table:not([class]) td,
 .md-typeset table:not([class]) th {
   padding: 0.65rem 1.1rem;
+}
+
+.md-typeset table:not([class]) td {
+  font-family: "Sora", "Inter", sans-serif;
+  font-size: 0.95em;
 }
 
 .md-typeset table:not([class]) tr {
@@ -131,4 +230,343 @@
 .md-typeset .admonition,
 .md-typeset details {
   font-size: 1em;
+}
+
+/* Brand icons
+   -----------
+   :icon-name:{ .classname } renders monochrome (fill: currentColor) by
+   default — these give the LinkedIn/Claude/Chrome/Python/Git mentions their
+   real brand colors instead of inheriting the surrounding text's gray/black. */
+.linkedin {
+  color: #0a66c2;
+}
+
+.claude {
+  color: #d97757;
+}
+
+.chrome {
+  color: #4285f4;
+}
+
+.python {
+  color: #3776ab;
+}
+
+.git {
+  color: #f05033;
+}
+
+/* Required/Optional field badges
+   -------------------------------
+   Small pill labels used in config-field reference tables, in place of a
+   plain "Required"/"optional" text column. */
+.st-pill {
+  display: inline-block;
+  font-size: 0.68em;
+  font-weight: 700;
+  padding: 0.12em 0.7em;
+  border-radius: 1em;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.6;
+}
+
+.st-pill.req {
+  background: var(--md-primary-fg-color);
+  color: #fff;
+}
+
+.st-pill.opt {
+  background: var(--st-stripe-color);
+  color: var(--md-default-fg-color--light, #666);
+  border: 1px solid var(--st-border-color);
+}
+
+/* Guided-journey stepper
+   -----------------------
+   Setup walkthroughs (getting-started.md) render as a vertical numbered
+   timeline: each step is a big navy number badge on a connecting line, with
+   an uppercase gold "phase" kicker above the title. Requires md_in_html
+   (mkdocs.yml) since each step wraps a chunk of markdown in a <div>. */
+.st-steps {
+  margin: 2rem 0;
+}
+
+.st-step {
+  position: relative;
+  padding: 0 0 2rem 3.25rem;
+  margin-left: 1.1rem;
+  border-left: 2px solid var(--st-border-color);
+}
+
+.st-step:last-child {
+  border-left-color: transparent;
+  padding-bottom: 0.5rem;
+}
+
+.st-step > .st-step-num {
+  position: absolute;
+  left: -1.2rem;
+  top: -0.2rem;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  background: var(--md-primary-fg-color);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-family: "Sora", "Inter", sans-serif;
+  font-size: 1.05rem;
+  box-shadow: 0 2px 7px #00000038;
+}
+
+/* Step titles are h3s — Material's default h3 top margin (1.6em) would
+   double up with the step's own padding-top, pushing the title away from
+   its number badge. Zero it out; the step wrapper already owns spacing. */
+.st-step h3 {
+  margin-top: 0 !important;
+}
+
+.st-step .st-step-kicker {
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--st-heading-accent);
+}
+
+/* The kicker is a standalone markdown line, so it gets wrapped in a <p> —
+   that paragraph's default bottom margin is what was showing up as extra
+   space above the title (the h3's own margin-top is already zeroed above). */
+.st-step p:has(> .st-step-kicker) {
+  margin: 0;
+}
+
+/* Standalone-highlights variant (web-ui.md): these steps are independent
+   features, not an ordered sequence — unlike getting-started.md's setup
+   journey, the connecting line shouldn't run through the gap into the next
+   step's badge (that reads as "do this, then this"). Swap the trailing
+   padding for a plain, unbordered margin gap so the line stops where each
+   step's own content ends. */
+.st-steps--loose .st-step {
+  padding-bottom: 0;
+  margin: 0 0 3rem 1.1rem;
+}
+
+.st-steps--loose .st-step:last-child {
+  margin-bottom: 0;
+  /* The base .st-step:last-child rule hides the line entirely — appropriate
+     there since padding-bottom would otherwise leave it dangling into empty
+     space. The loose variant has no such gap (margin owns it instead), so
+     restore the line here; every standalone highlight should look the same,
+     including the last one. */
+  border-left-color: var(--st-border-color);
+}
+
+/* Product-landing home page
+   --------------------------
+   Centered hero (logo + headline + subhead + CTA buttons), a hero
+   screenshot, and a 3-step "how it works" flow strip. */
+.st-hero {
+  text-align: center;
+  padding: 1.5rem 0 0.5rem;
+}
+
+.st-hero .st-logo {
+  max-width: 320px;
+  width: 55%;
+  margin: 0 auto 1rem;
+}
+
+.md-typeset .st-hero .st-title,
+.st-hero .st-title {
+  font-family: "Sora", "Inter", sans-serif;
+  font-weight: 800;
+  font-size: 1.85rem;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+  margin: 0 auto 0.6rem;
+  max-width: 40ch;
+  white-space: nowrap;
+  color: var(--st-heading-accent);
+  border: 0;
+}
+
+@media screen and (max-width: 30rem) {
+  .md-typeset .st-hero .st-title,
+  .st-hero .st-title {
+    white-space: normal;
+    font-size: 1.5rem;
+  }
+}
+
+.st-sub {
+  font-size: 1.1rem;
+  color: var(--md-default-fg-color--light, #666);
+  max-width: 46ch;
+  margin: 0 auto 1.2rem;
+}
+
+.st-cta {
+  display: flex;
+  gap: 0.7rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.st-shot {
+  border-radius: 0.6rem;
+  box-shadow: 0 10px 34px #00000033;
+  margin: 0.5rem 0 0;
+}
+
+.st-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 1rem 0;
+}
+
+.st-flow-step {
+  flex: 1 1 150px;
+  background: var(--st-stripe-color);
+  border: 1px solid var(--st-border-color);
+  border-radius: 0.6rem;
+  padding: 1rem;
+  text-align: center;
+  position: relative;
+}
+
+.st-flow-step .st-flow-num {
+  font-family: "Sora", "Inter", sans-serif;
+  font-weight: 800;
+  font-size: 1.4rem;
+  color: var(--st-heading-accent);
+}
+
+.st-flow-step strong {
+  display: block;
+  margin-top: 0.2rem;
+}
+
+/* Architecture pipeline-flow diagram
+   ------------------------------------
+   A vertical chain of nodes (one per pipeline stage), auto-connected by a
+   CSS-drawn line + arrowhead between consecutive nodes. Each node can carry
+   a cost badge (Haiku/Sonnet/Free) so the "spend tokens where judgment
+   lives" story is visible in the diagram itself, not just the prose below
+   it. Requires md_in_html since each node wraps markdown in a <div>. */
+.arch-flow {
+  margin: 2rem 0;
+}
+
+.arch-node {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  background: var(--st-stripe-color);
+  border: 1px solid var(--st-border-color);
+  border-radius: 0.6rem;
+  padding: 0.9rem 1.2rem;
+  text-align: center;
+}
+
+.arch-node + .arch-node {
+  margin-top: 2.6rem;
+  position: relative;
+}
+
+.arch-node + .arch-node::before {
+  content: "";
+  position: absolute;
+  top: -2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 1.4rem;
+  background: var(--st-border-color);
+}
+
+.arch-node + .arch-node::after {
+  content: "▼";
+  position: absolute;
+  top: -0.95rem;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--st-border-color);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+/* Title/sub/cost are consecutive inline HTML lines in markdown source with
+   no blank lines between them — without display:block they'd collapse onto
+   one line instead of stacking. */
+.arch-node .arch-node-title {
+  display: block;
+  font-family: "Sora", "Inter", sans-serif;
+  font-weight: 700;
+}
+
+.arch-node .arch-node-sub {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--md-default-fg-color--light, #666);
+}
+
+.arch-cost {
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.12em 0.65em;
+  border-radius: 1em;
+  margin-top: 0.45rem;
+}
+
+/* A node can offer a choice of two pills (e.g. Claude model vs. the
+   alternate OpenAI-compatible route) — stacked, centered, with a small "or"
+   divider between them rather than side by side. */
+.arch-or {
+  display: block;
+  font-size: 0.68rem;
+  font-style: italic;
+  color: var(--md-default-fg-color--light, #888);
+  margin-top: 0.3rem;
+}
+
+.arch-cost.free {
+  background: rgba(26, 127, 75, 0.13);
+  color: #1a7f4b;
+  border: 1px solid rgba(26, 127, 75, 0.4);
+}
+
+.arch-cost.haiku {
+  background: rgba(61, 125, 177, 0.15);
+  color: #3d7db1;
+  border: 1px solid rgba(61, 125, 177, 0.45);
+}
+
+.arch-cost.sonnet {
+  background: rgba(217, 119, 87, 0.15);
+  color: #d97757;
+  border: 1px solid rgba(217, 119, 87, 0.45);
+}
+
+/* Marks the optional alternate route (Passes 2-3 can run on an
+   OpenAI-compatible server instead of Claude) — gold, matching the site's
+   general "accent/alternate path" color rather than a cost color. */
+.arch-cost.gateway {
+  background: var(--st-heading-accent);
+  color: #fff;
+  border: 1px solid var(--st-heading-accent);
+  opacity: 0.9;
 }

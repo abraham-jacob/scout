@@ -7,6 +7,7 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  logo: images/banner_dark.svg
   font:
     text: Inter
     code: JetBrains Mono
@@ -33,6 +34,8 @@ extra_css:
   - stylesheets/extra.css
 
 markdown_extensions:
+  - attr_list
+  - md_in_html
   - admonition
   - pymdownx.details
   - pymdownx.superfences
@@ -40,6 +43,9 @@ markdown_extensions:
       alternate_style: true
   - pymdownx.snippets:
       base_path: ["."]
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - tables
   - toc:
       permalink: true
@@ -48,7 +54,7 @@ nav:
   - Home: index.md
   - Configuration: getting-started.md
   - Using the Web UI: web-ui.md
-  - Local LLM Backend: local-llm.md
+  - OpenAI-compatible Backend: openai-compatible-backend.md
   - Architecture: architecture.md
   - Contributing: contributing.md
   - FAQ / Troubleshooting: faq.md

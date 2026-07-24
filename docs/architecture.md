@@ -5,9 +5,45 @@ orchestrated by [`agent/runner.py`](https://github.com/abraham-jacob/scout/blob/
 The module docstring at the top of that file is the canonical map of the
 pipeline — this page is the reader-facing version of the same design.
 
-![Scout architecture: LinkedIn capture, three-pass AI processing (clean, filter, enrich), DuckDB storage, and the FastAPI + HTMX UI](images/architecture.gif)
+<div class="arch-flow" markdown>
 
-## Pass 1 — browser scrape (Haiku)
+<div class="arch-node" markdown>
+<span class="arch-node-title">Pass 1 · Browser scrape</span>
+<span class="arch-node-sub">Drives Chrome, hits LinkedIn's Voyager API for every job on page 1</span>
+<span class="arch-cost haiku">Haiku</span>
+</div>
+
+<div class="arch-node" markdown>
+<span class="arch-node-title">Deterministic filters</span>
+<span class="arch-node-sub">Drops dupes, applied, closed, excluded — before spending a token</span>
+<span class="arch-cost free">Free</span>
+</div>
+
+<div class="arch-node" markdown>
+<span class="arch-node-title">Pass 2 · Clean</span>
+<span class="arch-node-sub">Strips boilerplate from each description, in parallel</span>
+<span class="arch-cost haiku">Haiku</span>
+<span class="arch-or">or</span>
+<span class="arch-cost gateway">OpenAI-compatible inference gateway</span>
+</div>
+
+<div class="arch-node" markdown>
+<span class="arch-node-title">Pass 3 · Enrich & score</span>
+<span class="arch-node-sub">Classifies, summarizes, tags, and scores 0–100, in parallel</span>
+<span class="arch-cost sonnet">Sonnet</span>
+<span class="arch-or">or</span>
+<span class="arch-cost gateway">OpenAI-compatible inference gateway</span>
+</div>
+
+<div class="arch-node" markdown>
+<span class="arch-node-title">DuckDB → Web UI</span>
+<span class="arch-node-sub">Survivors saved locally; the FastAPI + HTMX UI browses them</span>
+<span class="arch-cost free">Free</span>
+</div>
+
+</div>
+
+## :simple-claude:{ .claude } Pass 1 — browser scrape (Haiku)
 
 `runner.py` spawns `claude --print --chrome` on Haiku, driven by
 `agent/system_prompt.md`. This sub-agent does **no filtering** — it hits
@@ -43,7 +79,7 @@ Before spending another token, `apply_deterministic_filters()` cheaply drops:
 
 Filtering is free; LLM calls aren't.
 
-## Pass 2 — description cleaning (Haiku, parallel)
+## Pass 2 — description cleaning (Haiku or OpenAI API, parallel)
 
 For each survivor, one headless call strips non-role boilerplate out of the
 raw description — EEO/DEI statements, legal disclaimers, generic
@@ -54,7 +90,7 @@ back to the raw description, so Pass 3 always has something to work with. On
 the Claude backend this pass runs on Haiku; on the local backend it runs on
 whatever model is configured under `[llm.local]`.
 
-## Pass 3 — per-job enrichment and scoring (Sonnet, parallel)
+## Pass 3 — per-job enrichment and scoring (Sonnet or OpenAI API, parallel)
 
 For each survivor, one headless call — driven by
 `agent/enrichment_prompt.md`, which covers classification, summary, tags, and

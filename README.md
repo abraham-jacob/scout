@@ -32,7 +32,7 @@ Everything runs on your machine. Your resume, your criteria, and your job-search
 - [✨ Features](#-features)
 - [📋 Requirements](#-requirements)
 - [⚡ Quick Start](#-quick-start)
-- [🖥️ Local LLM Backend](#-local-llm-backend)
+- [🔌 OpenAI-compatible Backend](#-openai-compatible-backend)
 - [⚙️ Configuration Reference](#-configuration-reference)
 - [🔧 Engineering Notes](#-engineering-notes)
 - [🧪 Testing & Evals](#-testing--evals)
@@ -162,7 +162,7 @@ dealbreaker_cap = 30.0           # max score when a dealbreaker is present
 dir = "logs"
 
 [llm]
-backend = "claude"              # or "local" — see "Local LLM backend" below
+backend = "claude"              # or "local" — see "OpenAI-compatible Backend" below
 max_workers = 4                 # Pass 2/3 parallelism
 ```
 
@@ -187,9 +187,9 @@ pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one ad-
 
 <br>
 
-## 🖥️ Local LLM Backend
+## 🔌 OpenAI-compatible Backend
 
-Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any OpenAI-compatible server instead of the Claude API. Pass 1 always runs on Claude, because it's an agentic browser task a local text model can't do.
+Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any **OpenAI-compatible** server instead of the Claude API. That's broader than "local": [Ollama](https://ollama.com) running on your own box is the common case (free, fully private), but the same config also works with a remote OpenAI-compatible API (e.g. [Kimi](https://www.moonshot.ai/)) if you'd rather not run a server yourself. Pass 1 always runs on Claude, because it's an agentic browser task a text model can't do.
 
 ```toml
 [llm]
@@ -208,7 +208,7 @@ reasoning_effort = "low"        # merged verbatim into the API call
 reasoning_effort = "medium"
 ```
 
-The local path is built for imperfect hardware: Scout fires a warm-up request at run start so the model loads *before* the timed passes (with its own generous timeout and retries), keeps per-call timeouts tight so a stalled generation fails fast, and gives every failed call one parallel retry pass before falling back gracefully. Setup validation pings the server and verifies the model id before any browser work starts.
+This path is built for imperfect hardware: Scout fires a warm-up request at run start so a self-hosted model loads *before* the timed passes (with its own generous timeout and retries), keeps per-call timeouts tight so a stalled generation fails fast, and gives every failed call one parallel retry pass before falling back gracefully. Setup validation pings the server and verifies the model id before any browser work starts.
 
 <br>
 

@@ -1,27 +1,105 @@
-# Scout
+---
+hide:
+  - toc
+---
 
-**An AI agent that reads your LinkedIn job alerts, scrapes every posting behind them, and tells you which ones are actually worth your time.**
+<div class="st-hero" markdown>
+![Scout](images/banner_light.svg#only-light){ .st-logo }
+![Scout](images/banner_dark.svg#only-dark){ .st-logo }
 
-LinkedIn job search results are a firehose: dozens of postings a day, half of them reposts, mismatches, or roles you already applied to. Scout drinks from the firehose for you. It drives a real Chrome session to scrape **every** job behind each of your saved LinkedIn searches (including the ones LinkedIn never renders), cleans the boilerplate out of each description, classifies and scores every role against *your* resume and criteria, and files the survivors into a local database with a clean web UI — each job tagged, summarized, and scored out of 100.
+# Know which jobs are worth your time. { .st-title }
 
-Everything runs on your machine. Your resume, your criteria, and your job-search data never leave it — except as prompts to the LLM you choose (Claude API, or a fully local model via Ollama).
+<p class="st-sub">
+Scout scrapes every posting behind your LinkedIn searches, then classifies,
+summarizes, and scores each one against your résumé — locally.
+</p>
 
-![Scout job list UI](images/scout_light.png)
+<div class="st-cta" markdown>
+[Get started :material-arrow-right:](getting-started.md){ .md-button .md-button--primary }
+[:fontawesome-brands-github: View on GitHub](https://github.com/abraham-jacob/scout){ .md-button }
+</div>
+</div>
+
+![Scout job list UI](images/scout_light.png#only-light){ .st-shot }
+![Scout job list UI](images/scout_dark.png#only-dark){ .st-shot }
+
+## How it works
+
+<div class="st-flow" markdown>
+<div class="st-flow-step" markdown>
+<span class="st-flow-num">1</span>
+**Scrape**
+Drives real Chrome to pull every job behind each saved search.
+</div>
+<div class="st-flow-step" markdown>
+<span class="st-flow-num">2</span>
+**Clean & classify**
+Strips boilerplate, sorts each role into your categories.
+</div>
+<div class="st-flow-step" markdown>
+<span class="st-flow-num">3</span>
+**Score**
+Rates every job out of 100 against your résumé & criteria.
+</div>
+</div>
+
+## What you get
+
+<div class="grid cards" markdown>
+
+-   :material-target: __A match score, 0–100__
+
+    ---
+
+    Every job scored against your résumé, profile, and dealbreakers.
+
+    ![Match score](images/feature_job_match_score.png)
+
+-   :material-tag-multiple: __Auto-tagging & summaries__
+
+    ---
+
+    A 2–4 sentence summary and tags on every card — no more scrolling boilerplate.
+
+    ![Tagging](images/feature_tagging.png)
+
+-   :material-filter-variant: __Sort & filter__
+
+    ---
+
+    By role, score, company, status. Find the good ones fast.
+
+    ![Sort and filter](images/feature_sort_filter.png)
+
+-   :material-shield-lock: __Runs on your machine__
+
+    ---
+
+    Your data stays local. Bring :simple-claude:{ .claude } Claude, or a
+    fully local model via :simple-ollama: Ollama.
+
+</div>
 
 ## Why I built this
 
-I built Scout during my own job search. Every morning started with a stack of LinkedIn alert emails, and every posting meant the same ritual: open it, scroll past three paragraphs of EEO boilerplate, figure out if it's a real match, check whether I'd already seen it last week under a different posting ID. After a few weeks I realized I was doing the same mechanical classification task hundreds of times — which is exactly the kind of task you should hand to an agent. So I did.
+I built Scout during my own job search. Every morning started with a stack of
+LinkedIn alert emails, and every posting meant the same ritual: open it,
+scroll past three paragraphs of EEO boilerplate, figure out if it's a real
+match, check whether I'd already seen it last week under a different posting
+ID. After a few weeks I realized I was doing the same mechanical
+classification task hundreds of times — which is exactly the kind of task
+you should hand to an agent. So I did.
 
-## Where to go next
+## Explore the docs
 
 - **[Configuration](getting-started.md)** — requirements, setup walkthrough, and the full `config.toml`/scoring-file reference
 - **[Using the Web UI](web-ui.md)** — filtering, job cards, match scores, the application pipeline
-- **[Local LLM Backend](local-llm.md)** — run Passes 2–3 on a free, fully local model
+- **[OpenAI-compatible Backend](openai-compatible-backend.md)** — run Passes 2–3 on Ollama or any other OpenAI-compatible server, local or remote
 - **[Architecture](architecture.md)** — how the three-pass pipeline actually works
 - **[Contributing](contributing.md)** — conventions for working on Scout itself
 - **[FAQ / Troubleshooting](faq.md)**
 
-## Project links
+---
 
-- [Source on GitHub](https://github.com/abraham-jacob/scout)
-- [MIT License](https://github.com/abraham-jacob/scout/blob/main/LICENSE) © 2026 Jacob Abraham
+[Source on GitHub](https://github.com/abraham-jacob/scout) ·
+[MIT License](https://github.com/abraham-jacob/scout/blob/main/LICENSE) © 2026 Jacob Abraham
