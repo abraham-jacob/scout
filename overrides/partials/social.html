@@ -1,0 +1,14 @@
+{#-
+  Override of Material's partials/social.html — renders the real Buy Me a
+  Coffee / Ko-fi badge images instead of generic icon SVGs. See the comment
+  above `extra.social` in mkdocs.yml for why that config still needs an
+  entry even though this template ignores it.
+-#}
+<div class="md-social md-social--badges">
+  <a href="https://buymeacoffee.com/jacob.abraham" target="_blank" rel="noopener" title="Buy me a coffee" class="md-social__link md-social__link--badge">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee">
+  </a>
+  <a href="https://ko-fi.com/jacobabraham" target="_blank" rel="noopener" title="Support me on Ko-fi" class="md-social__link md-social__link--badge">
+    <img src="{{ 'images/kofi_button.png' | url }}" alt="Support me on Ko-fi">
+  </a>
+</div>

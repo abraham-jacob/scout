@@ -101,5 +101,13 @@ you should hand to an agent. So I did.
 
 ---
 
-[Source on GitHub](https://github.com/abraham-jacob/scout) ·
-[MIT License](https://github.com/abraham-jacob/scout/blob/main/LICENSE) © 2026 Jacob Abraham
+<div style="text-align: center;" markdown>
+Made with ❤️ by Jacob Abraham.
+<br>
+If you found Scout helpful or if Scout helped you land your next role, consider supporting the project ☕.
+
+<div class="st-cta" markdown>
+<a href="https://buymeacoffee.com/jacob.abraham" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 36px;border: 0px;vertical-align: middle;" ></a>
+<a href="https://ko-fi.com/jacobabraham" target="_blank"><img src="images/kofi_button.png" alt="Support me on Ko-fi" style="height: 36px;border: 0px;vertical-align: middle;" ></a>
+</div>
+</div>

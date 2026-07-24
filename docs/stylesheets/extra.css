@@ -570,3 +570,84 @@
   border: 1px solid var(--st-heading-accent);
   opacity: 0.9;
 }
+
+/* Pinned footer
+   -------------
+   The footer (copyright + support badges — the prev/next nav row is
+   disabled via mkdocs.yml's theme.features, it ate too much vertical space
+   for what it offered) stays visible at the bottom of the viewport at all
+   times instead of scrolling away with content. .md-main gets matching
+   bottom padding so the last bit of page content never sits underneath it —
+   measured footer height is ~3.5rem, so 4.5rem covers it with buffer. */
+.md-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+}
+
+.md-main {
+  padding-bottom: 4.5rem;
+}
+
+/* Support badges in the footer (real BMC/Ko-fi images, via
+   overrides/partials/social.html) — Material's default .md-social__link is
+   a fixed 1.6rem square sized for icon glyphs, which would squash our wide
+   rectangular badge images, so give the badge variant its own sizing. */
+.md-social--badges {
+  align-items: center;
+}
+
+.md-social__link--badge {
+  height: auto;
+  width: auto;
+}
+
+.md-social__link--badge img {
+  display: block;
+  height: 1.9rem;
+  width: auto;
+}
+
+/* Three-zone footer meta row: "Made with..." left, Source/License center,
+   badges right (see overrides/partials/copyright.html + social.html for the
+   markup this targets). Overrides Material's default 2-item
+   flex/space-between with an explicit 3-column grid so the center zone
+   stays truly centered regardless of how wide the left/right zones are. */
+.md-footer-meta__inner {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+}
+
+.md-copyright--made {
+  text-align: left;
+  width: auto;
+}
+
+.md-copyright--links {
+  text-align: center;
+  width: auto;
+}
+
+.md-social--badges {
+  justify-self: end;
+  margin: 0;
+}
+
+/* Three columns get tight below ~45rem — stack them centered instead. */
+@media screen and (max-width: 45rem) {
+  .md-footer-meta__inner {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+    gap: 0.4rem;
+  }
+
+  .md-social--badges {
+    justify-self: center;
+  }
+}
+
