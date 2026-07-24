@@ -1,0 +1,21 @@
+{#-
+  Override of Material's partials/social.html — three-zone footer bar:
+  "Made with..." (left), Source/License line (center), badges come from
+  social.html (right). Two separate top-level divs here (not nested) so
+  .md-footer-meta__inner can grid-position each independently — see the
+  .md-footer-meta__inner rule in extra.css.
+-#}
+<div class="md-copyright md-copyright--made">
+  {% if not config.extra.generator == false %}
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  {% endif %}
+</div>
+<div class="md-copyright md-copyright--links">
+  <a href="https://github.com/abraham-jacob/scout" target="_blank" rel="noopener">Source on GitHub</a>
+  ·
+  <a href="https://github.com/abraham-jacob/scout/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+  © 2026 Jacob Abraham
+</div>

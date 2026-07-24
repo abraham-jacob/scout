@@ -7,6 +7,7 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  custom_dir: overrides
   logo: images/banner_dark.svg
   font:
     text: Inter
@@ -25,7 +26,6 @@ theme:
   features:
     - navigation.top
     - navigation.indexes
-    - navigation.footer
     - content.code.copy
     - content.action.edit
     - toc.follow
@@ -59,11 +59,12 @@ nav:
   - Contributing: contributing.md
   - FAQ / Troubleshooting: faq.md
 
+# extra.social must stay non-empty for Material's footer.html to include the
+# social partial at all — the actual footer content (real BMC/Ko-fi badge
+# images instead of icons) comes from overrides/partials/social.html below,
+# which ignores this list. Kept here only as the presence-gate.
 extra:
   social:
     - icon: fontawesome/solid/mug-saucer
       link: https://buymeacoffee.com/jacob.abraham
       name: Buy me a coffee
-    - icon: simple/kofi
-      link: https://ko-fi.com/jacobabraham
-      name: Support me on Ko-fi
