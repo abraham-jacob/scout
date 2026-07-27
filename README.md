@@ -108,10 +108,10 @@ Every card links straight to the fastest path to apply — the company's own sit
 
 <img src="docs/images/feature_links_to_apply.png" alt="Apply on company site and LinkedIn links on a job card" width="100%">
 
-### 🖥️ Use Claude, or bring your own local LLM
-Run the description-cleaning and enrichment passes on the Claude API for best-in-class quality, or point them at any OpenAI-compatible local server (Ollama, etc.) for a fully free, fully private run — no job description ever leaves your machine. Switch backends with one line in `profiles/config.toml`; the run drawer always shows exactly which backend and model did the work.
+### 🖥️ Use Claude, or bring your own OpenAI-compatible model
+Run the description-cleaning and enrichment passes on the Claude API for best-in-class quality, or point them at any OpenAI-compatible endpoint (Ollama, etc.) for a fully free, fully private run — no job description ever leaves your machine. Switch backends with one line in `profiles/config.toml`; the run drawer always shows exactly which backend and model did the work.
 
-<img src="docs/images/feature_backend_toggle.gif" alt="The run drawer's backend badge switching between Claude and a local model" width="100%">
+<img src="docs/images/feature_backend_toggle.gif" alt="The run drawer's backend badge switching between Claude and a self-hosted model" width="100%">
 
 <br>
 
@@ -124,9 +124,9 @@ Scout is a personal, single-user tool. It expects:
 | **Python 3.12** + [pipenv](https://pipenv.pypa.io/) | Runtime & dependency management |
 | **Git** | To clone the repo |
 | **Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
-| **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at a local model |
+| **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at an OpenAI-compatible model |
 | **A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |
-| *(Optional)* An OpenAI-compatible local server ([Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on a local model: free and private |
+| *(Optional)* An OpenAI-compatible server ([Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on that model: free and private |
 
 <br>
 
@@ -165,7 +165,7 @@ dealbreaker_cap = 30.0           # max score when a dealbreaker is present
 dir = "logs"
 
 [llm]
-backend = "claude"              # or "local" — see "OpenAI-compatible Backend" below
+backend = "claude"              # or "api" — see "OpenAI-compatible Backend" below
 max_workers = 4                 # Pass 2/3 parallelism
 ```
 
@@ -192,22 +192,22 @@ pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one ad-
 
 ## 🔌 OpenAI-compatible Backend
 
-Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any **OpenAI-compatible** server instead of the Claude API. That's broader than "local": [Ollama](https://ollama.com) running on your own box is the common case (free, fully private), but the same config also works with a remote OpenAI-compatible API (e.g. [Kimi](https://www.moonshot.ai/)) if you'd rather not run a server yourself. Pass 1 always runs on Claude, because it's an agentic browser task a text model can't do.
+Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any **OpenAI-compatible** server instead of the Claude API: [Ollama](https://ollama.com) running on your own box is the common case (free, fully private), but the same config also works with a remote OpenAI-compatible API (e.g. [Kimi](https://www.moonshot.ai/)) if you'd rather not run a server yourself. Pass 1 always runs on Claude, because it's an agentic browser task a text model can't do.
 
 ```toml
 [llm]
-backend = "local"
+backend = "api"
 max_workers = 1                 # tune to your GPU; a 16GB box may want 1
 
-[llm.local]
+[llm.api]
 base_url = "http://localhost:11434/v1"
 model    = "gpt-oss:20b"        # must match the server's model id exactly
 timeout  = 45                   # per-call seconds; stalls fail fast and retry
 
-[llm.local.clean]               # optional per-pass request params,
+[llm.api.clean]                 # optional per-pass request params,
 reasoning_effort = "low"        # merged verbatim into the API call
 
-[llm.local.enrich]
+[llm.api.enrich]
 reasoning_effort = "medium"
 ```
 
@@ -244,7 +244,7 @@ The prompts are tested too: [`scripts/clean_prompt_test.py`](scripts/clean_promp
 
 ## 💰 Costs
 
-With the Claude backend, a run costs what the models cost: Haiku for the scrape and clean passes, Sonnet only for enrichment, prompt caching on, and the exact token usage and dollar cost printed at the end of every run. With the local backend, Passes 2–3 are free — Pass 1's Haiku scrape is the only API spend.
+With the Claude backend, a run costs what the models cost: Haiku for the scrape and clean passes, Sonnet only for enrichment, prompt caching on, and the exact token usage and dollar cost printed at the end of every run. With the api backend, Passes 2–3 aren't metered by Scout — Pass 1's Haiku scrape is the only guaranteed API spend (a remote OpenAI-compatible endpoint may still bill you for its own usage).
 
 <br>
 

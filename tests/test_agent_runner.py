@@ -478,12 +478,12 @@ def _fake_config(**overrides):
     base = dict(
         llm_backend="claude",
         max_workers=2,
-        local_base_url=None,
-        local_model=None,
-        local_api_key=None,
-        local_timeout=300.0,
-        local_clean_params={},
-        local_enrich_params={},
+        api_base_url=None,
+        api_model=None,
+        api_key=None,
+        api_timeout=300.0,
+        api_clean_params={},
+        api_enrich_params={},
     )
     base.update(overrides)
     return types.SimpleNamespace(**base)
@@ -542,19 +542,19 @@ class TestRunHeadlessBackend:
             return '{"ok": 1}'
 
         monkeypatch.setattr(runner, "_run_claude_headless", _fake_claude)
-        monkeypatch.setattr(runner, "_run_local_llm",
-                            lambda *a, **k: pytest.fail("local path used"))
+        monkeypatch.setattr(runner, "_run_api_llm",
+                            lambda *a, **k: pytest.fail("api path used"))
 
         assert run_headless("clean", "sys", "usr") == '{"ok": 1}'
         assert seen["model"] == runner.CLEAN_MODEL
         assert run_headless("enrich", "sys", "usr") == '{"ok": 1}'
         assert seen["model"] == runner.ENRICH_MODEL
 
-    def test_local_backend_posts_and_maps_usage(self, monkeypatch):
-        """backend=local streams from the server and maps OpenAI usage at zero cost."""
+    def test_api_backend_posts_and_maps_usage(self, monkeypatch):
+        """backend=api streams from the server and maps OpenAI usage at zero cost."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box:11434/v1",
-            local_model="gpt-oss:20b", local_api_key="k", local_timeout=42.0))
+            llm_backend="api", api_base_url="http://box:11434/v1",
+            api_model="gpt-oss:20b", api_key="k", api_timeout=42.0))
 
         captured = {}
 
@@ -590,13 +590,13 @@ class TestRunHeadlessBackend:
         with _tokens_lock:
             assert _tokens["input"] == in0 + 11
             assert _tokens["output"] == out0 + 4
-            assert _tokens["cost_usd"] == cost0  # local inference is free
+            assert _tokens["cost_usd"] == cost0  # this backend isn't metered by the pipeline
 
-    def test_local_backend_no_api_key_omits_auth_header(self, monkeypatch):
+    def test_api_backend_no_api_key_omits_auth_header(self, monkeypatch):
         """Without api_key, no Authorization header is sent."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box:11434/v1",
-            local_model="m", local_api_key=None, local_timeout=5.0))
+            llm_backend="api", api_base_url="http://box:11434/v1",
+            api_model="m", api_key=None, api_timeout=5.0))
         captured = {}
 
         def _fake_stream(method, url, json=None, headers=None, timeout=None):
@@ -607,11 +607,11 @@ class TestRunHeadlessBackend:
         run_headless("enrich", "sys", "usr")
         assert "Authorization" not in captured["headers"]
 
-    def test_local_backend_http_error_returns_none(self, monkeypatch):
+    def test_api_backend_http_error_returns_none(self, monkeypatch):
         """A network/HTTP failure exhausts all retries and returns None."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box:11434/v1",
-            local_model="m", local_api_key=None, local_timeout=5.0))
+            llm_backend="api", api_base_url="http://box:11434/v1",
+            api_model="m", api_key=None, api_timeout=5.0))
         slept = []
         monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
 
@@ -620,14 +620,14 @@ class TestRunHeadlessBackend:
 
         monkeypatch.setattr(runner.httpx, "stream", _boom)
         assert run_headless("clean", "sys", "usr") is None
-        # Retried LOCAL_STREAM_RETRIES times, sleeping between attempts (not after the last).
-        assert slept == [runner.LOCAL_STREAM_RETRY_DELAY_S] * (runner.LOCAL_STREAM_RETRIES - 1)
+        # Retried API_STREAM_RETRIES times, sleeping between attempts (not after the last).
+        assert slept == [runner.API_STREAM_RETRY_DELAY_S] * (runner.API_STREAM_RETRIES - 1)
 
-    def test_local_backend_http_error_recovers_on_retry(self, monkeypatch):
+    def test_api_backend_http_error_recovers_on_retry(self, monkeypatch):
         """A stream that fails once then succeeds is not treated as a failure."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box:11434/v1",
-            local_model="m", local_api_key=None, local_timeout=5.0))
+            llm_backend="api", api_base_url="http://box:11434/v1",
+            api_model="m", api_key=None, api_timeout=5.0))
         monkeypatch.setattr(runner.time, "sleep", lambda s: None)
         calls = {"n": 0}
 
@@ -641,11 +641,11 @@ class TestRunHeadlessBackend:
         assert run_headless("clean", "sys", "usr") == "{}"
         assert calls["n"] == 2
 
-    def test_local_backend_malformed_response_returns_none(self, monkeypatch):
+    def test_api_backend_malformed_response_returns_none(self, monkeypatch):
         """A stream with no content chunks at all returns None, not a crash."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box:11434/v1",
-            local_model="m", local_api_key=None, local_timeout=5.0))
+            llm_backend="api", api_base_url="http://box:11434/v1",
+            api_model="m", api_key=None, api_timeout=5.0))
 
         def _fake_stream(*a, **k):
             return _FakeStreamResponse(["data: [DONE]"])
@@ -654,7 +654,7 @@ class TestRunHeadlessBackend:
         assert run_headless("enrich", "sys", "usr") is None
 
     def _capture_payload(self, monkeypatch, config):
-        """Run one local call under `config` and return the streamed JSON payload."""
+        """Run one api call under `config` and return the streamed JSON payload."""
         monkeypatch.setattr(runner, "load_config", lambda: config)
         captured = {}
 
@@ -665,12 +665,12 @@ class TestRunHeadlessBackend:
         monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
         return captured
 
-    def test_local_per_pass_params_merged(self, monkeypatch):
-        """[llm.local.<pass>] params are merged into the payload for that pass."""
+    def test_api_per_pass_params_merged(self, monkeypatch):
+        """[llm.api.<pass>] params are merged into the payload for that pass."""
         config = _fake_config(
-            llm_backend="local", local_base_url="http://box/v1", local_model="m",
-            local_clean_params={"temperature": 0.2, "reasoning_effort": "low"},
-            local_enrich_params={"reasoning_effort": "high"})
+            llm_backend="api", api_base_url="http://box/v1", api_model="m",
+            api_clean_params={"temperature": 0.2, "reasoning_effort": "low"},
+            api_enrich_params={"reasoning_effort": "high"})
         captured = self._capture_payload(monkeypatch, config)
 
         run_headless("clean", "sys", "usr")
@@ -682,7 +682,7 @@ class TestRunHeadlessBackend:
         # enrich set no temperature, so none is sent — server default applies
         assert "temperature" not in captured["json"]
 
-    def test_local_params_cannot_clobber_owned_fields(self, monkeypatch):
+    def test_api_params_cannot_clobber_owned_fields(self, monkeypatch):
         """model/messages/stream/stream_options are re-asserted even if a param
         table sets them.
 
@@ -690,8 +690,8 @@ class TestRunHeadlessBackend:
         them defensively too.
         """
         config = _fake_config(
-            llm_backend="local", local_base_url="http://box/v1", local_model="m",
-            local_clean_params={"model": "evil", "stream": False})
+            llm_backend="api", api_base_url="http://box/v1", api_model="m",
+            api_clean_params={"model": "evil", "stream": False})
         captured = self._capture_payload(monkeypatch, config)
 
         run_headless("clean", "sys", "usr")
@@ -702,11 +702,11 @@ class TestRunHeadlessBackend:
 class TestEnrichJobsWarmup:
     """Test the prompt-cache warmup is Claude-only."""
 
-    def test_local_backend_skips_sleep_warmup(self, monkeypatch):
-        """On the local backend, enrich_jobs never does the cache-warm sleep."""
+    def test_api_backend_skips_sleep_warmup(self, monkeypatch):
+        """On the api backend, enrich_jobs never does the cache-warm sleep."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box:11434/v1",
-            local_model="m"))
+            llm_backend="api", api_base_url="http://box:11434/v1",
+            api_model="m"))
         monkeypatch.setattr(runner, "scoring_enabled", lambda: False)
         monkeypatch.setattr(runner, "enrich_one",
                             lambda job: dict(runner._ENRICH_FAILURE))
@@ -730,7 +730,7 @@ class TestEnrichJobsWarmup:
 
 
 class TestWarmUpCleanPass:
-    """Test the realistically-sized local-model warm-up clean call."""
+    """Test the realistically-sized model warm-up clean call."""
 
     def test_succeeds_first_attempt_no_sleep(self, monkeypatch):
         """A successful first clean_one call returns immediately, no sleep."""
@@ -738,7 +738,7 @@ class TestWarmUpCleanPass:
         slept = []
         monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
 
-        runner._warm_up_clean_pass(_fake_config(llm_backend="local"))
+        runner._warm_up_clean_pass(_fake_config(llm_backend="api"))
         assert slept == []
 
     def test_recovers_on_retry(self, monkeypatch):
@@ -753,7 +753,7 @@ class TestWarmUpCleanPass:
         slept = []
         monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
 
-        runner._warm_up_clean_pass(_fake_config(llm_backend="local"))
+        runner._warm_up_clean_pass(_fake_config(llm_backend="api"))
         assert calls["n"] == 3
         assert slept == [runner.WARMUP_CLEAN_RETRY_DELAY_S, runner.WARMUP_CLEAN_RETRY_DELAY_S]
 
@@ -764,15 +764,15 @@ class TestWarmUpCleanPass:
         monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
 
         with pytest.raises(SystemExit) as exc_info:
-            runner._warm_up_clean_pass(_fake_config(llm_backend="local"))
+            runner._warm_up_clean_pass(_fake_config(llm_backend="api"))
 
         assert exc_info.value.code == 1
         # No sleep after the final (3rd) failed attempt.
         assert slept == [runner.WARMUP_CLEAN_RETRY_DELAY_S, runner.WARMUP_CLEAN_RETRY_DELAY_S]
 
 
-class TestRetryLocalFailures:
-    """Unit tests for the shared local-only one-shot retry helper."""
+class TestRetryApiFailures:
+    """Unit tests for the shared api-only one-shot retry helper."""
 
     def test_noop_when_nothing_failed(self):
         """No failures in results means the retry fn is never called."""
@@ -784,7 +784,7 @@ class TestRetryLocalFailures:
 
         jobs = [{"id": 1}, {"id": 2}]
         results = ["ok1", "ok2"]
-        runner._retry_local_failures(jobs, results, lambda r: r is None,
+        runner._retry_api_failures(jobs, results, lambda r: r is None,
                                      one_fn, 2, "test")
         assert calls == []
         assert results == ["ok1", "ok2"]
@@ -793,7 +793,7 @@ class TestRetryLocalFailures:
         """Only the jobs whose result trips is_failure get re-run."""
         jobs = [{"id": 1}, {"id": 2}, {"id": 3}]
         results = ["ok", None, None]
-        runner._retry_local_failures(
+        runner._retry_api_failures(
             jobs, results, lambda r: r is None,
             lambda job: f"retried-{job['id']}", 2, "test")
         assert results == ["ok", "retried-2", "retried-3"]
@@ -802,18 +802,18 @@ class TestRetryLocalFailures:
         """A retry that fails again leaves the failure value in place."""
         jobs = [{"id": 1}]
         results = [None]
-        runner._retry_local_failures(jobs, results, lambda r: r is None,
+        runner._retry_api_failures(jobs, results, lambda r: r is None,
                                      lambda job: None, 2, "test")
         assert results == [None]
 
 
 class TestCleanJobsRetry:
-    """Test the local-only one-shot retry for Pass 2 clean failures."""
+    """Test the api-only one-shot retry for Pass 2 clean failures."""
 
-    def test_local_backend_retries_failed_clean_once(self, monkeypatch):
+    def test_api_backend_retries_failed_clean_once(self, monkeypatch):
         """A clean_one failure gets exactly one retry, and success sticks."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box/v1", local_model="m"))
+            llm_backend="api", api_base_url="http://box/v1", api_model="m"))
         calls = {"job-fail": 0}
         jobs = [{"job_id": "job-ok", "description_raw": "raw ok"},
                 {"job_id": "job-fail", "description_raw": "raw fail"}]
@@ -833,10 +833,10 @@ class TestCleanJobsRetry:
         assert jobs[1]["description_clean"] == "recovered"
         assert calls["job-fail"] == 2
 
-    def test_local_backend_falls_back_to_raw_if_retry_also_fails(self, monkeypatch):
+    def test_api_backend_falls_back_to_raw_if_retry_also_fails(self, monkeypatch):
         """If the retry also fails, clean_jobs falls back to description_raw."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box/v1", local_model="m"))
+            llm_backend="api", api_base_url="http://box/v1", api_model="m"))
         monkeypatch.setattr(runner, "clean_one", lambda job: None)
         jobs = [{"job_id": "1", "description_raw": "raw text"}]
 
@@ -883,12 +883,12 @@ class TestCleanJobsRetry:
 
 
 class TestEnrichJobsRetry:
-    """Test the local-only one-shot retry for Pass 3 enrich failures."""
+    """Test the api-only one-shot retry for Pass 3 enrich failures."""
 
-    def test_local_backend_retries_failed_enrich_once(self, monkeypatch):
+    def test_api_backend_retries_failed_enrich_once(self, monkeypatch):
         """An enrich_one failure gets exactly one retry, and success sticks."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box/v1", local_model="m"))
+            llm_backend="api", api_base_url="http://box/v1", api_model="m"))
         monkeypatch.setattr(runner, "scoring_enabled", lambda: False)
         calls = {"job-fail": 0}
         jobs = [{"job_id": "job-ok"}, {"job_id": "job-fail"}]
@@ -912,10 +912,10 @@ class TestEnrichJobsRetry:
         assert jobs[1]["role_type"] == "IC"
         assert calls["job-fail"] == 2
 
-    def test_local_backend_stays_failed_if_retry_also_fails(self, monkeypatch):
+    def test_api_backend_stays_failed_if_retry_also_fails(self, monkeypatch):
         """If the retry also fails, the job keeps the failure sentinel fields."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="local", local_base_url="http://box/v1", local_model="m"))
+            llm_backend="api", api_base_url="http://box/v1", api_model="m"))
         monkeypatch.setattr(runner, "scoring_enabled", lambda: False)
         monkeypatch.setattr(runner, "enrich_one",
                             lambda job: dict(runner._ENRICH_FAILURE))

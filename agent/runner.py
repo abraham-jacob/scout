@@ -27,9 +27,10 @@ Pass 3 — Per-job enrichment (Sonnet, parallel, enrichment_prompt.md)
 
 Passes 2 and 3 are the two "headless" passes and run on a configurable backend
 (profiles/config.toml [llm] backend): the default "claude" shells out to the
-`claude` CLI, while "local" routes both through run_headless() to a local
-OpenAI-compatible server (e.g. Ollama). Pass 1 always runs on Claude — it drives
-the browser and is agentic, which a local text model can't do.
+`claude` CLI, while "api" routes both through run_headless() to any
+OpenAI-compatible endpoint (e.g. Ollama, local or remote). Pass 1 always runs on
+Claude — it drives the browser and is agentic, which a text-completion model
+can't do.
 
 Usage:
     python -m agent.runner                 # scrapes every profiles/config.toml [[linkedin_searches]] entry
@@ -82,7 +83,7 @@ ENRICH_MODEL  = "claude-sonnet-4-6"
 # The Pass 2/Pass 3 worker-pool width is configurable per backend via
 # [llm] max_workers (config.max_workers). It's a knob because the right value
 # depends on the active backend: a Claude run trades wall-clock against
-# duplicate prompt-cache writes of the shared system prompt, while a local
+# duplicate prompt-cache writes of the shared system prompt, while an api-backend
 # server is bounded by its own VRAM/throughput (a 16GB box may only manage 1).
 
 # The clean/enrich calls are structured extraction against an explicit rubric;
@@ -344,15 +345,15 @@ def _extract_json(text: str) -> dict:
 # ---------------------------------------------------------------------------
 
 # Which Claude model each headless pass uses when backend == "claude". On the
-# local backend both passes use the single configured [llm.local] model.
+# api backend both passes use the single configured [llm.api] model.
 _PASS_CLAUDE_MODEL = {"clean": CLEAN_MODEL, "enrich": ENRICH_MODEL}
 
 
 def run_headless(pass_name: str, system_prompt: str, user_message: str) -> str | None:
     """Run one headless structured call for Pass 2/3 on the configured backend.
 
-    Dispatches to Claude (a `claude --print` subprocess) or a local
-    OpenAI-compatible server (e.g. Ollama) according to [llm] backend in the
+    Dispatches to Claude (a `claude --print` subprocess) or an OpenAI-compatible
+    endpoint (e.g. Ollama, local or remote) according to [llm] backend in the
     config. pass_name is "clean" or "enrich". Handles model-call logging and
     token/cost accounting internally and returns the raw model result text (the
     JSON blob the caller parses with _extract_json), or None on any failure so
@@ -360,11 +361,11 @@ def run_headless(pass_name: str, system_prompt: str, user_message: str) -> str |
     through here — it always runs on Claude via run_claude.
     """
     config = load_config()
-    if config.llm_backend == "local":
-        model = config.local_model
+    if config.llm_backend == "api":
+        model = config.api_model
         log_model_call(pass_name, model, system_prompt, user_message)
-        return _run_local_llm(config, pass_name, model, system_prompt,
-                              user_message)
+        return _run_api_llm(config, pass_name, model, system_prompt,
+                            user_message)
     model = _PASS_CLAUDE_MODEL[pass_name]
     log_model_call(pass_name, model, system_prompt, user_message)
     return _run_claude_headless(model, system_prompt, user_message)
@@ -419,29 +420,29 @@ def _run_claude_headless(model: str, system_prompt: str,
 # benefit: httpx's read timeout applies per-chunk on a streamed response, not
 # once for the whole reply, so a slow-but-progressing generation no longer
 # trips a false-positive timeout the way one all-or-nothing deadline did —
-# only a genuine stall (no new chunk within config.local_timeout) does.
-# LOCAL_STREAM_RETRIES/LOCAL_STREAM_RETRY_DELAY_S retry a stalled/dropped
+# only a genuine stall (no new chunk within config.api_timeout) does.
+# API_STREAM_RETRIES/API_STREAM_RETRY_DELAY_S retry a stalled/dropped
 # stream a few times, pausing between attempts so an already-abandoned
 # generation has a chance to actually finish draining server-side before the
 # next attempt piles on top of it.
-LOCAL_STREAM_RETRIES = 3
-LOCAL_STREAM_RETRY_DELAY_S = 10
+API_STREAM_RETRIES = 3
+API_STREAM_RETRY_DELAY_S = 10
 
 
-def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
-                   user_message: str) -> str | None:
-    """POST one streamed chat-completion to the configured OpenAI-compatible server.
+def _run_api_llm(config, pass_name: str, model: str, system_prompt: str,
+                 user_message: str) -> str | None:
+    """POST one streamed chat-completion to the configured OpenAI-compatible endpoint.
 
-    Talks to config.local_base_url (e.g. an Ollama server's /v1 endpoint),
+    Talks to config.api_base_url (e.g. an Ollama server's /v1 endpoint),
     asking for JSON output. Temperature is NOT forced — the server/model default
     applies unless the per-pass param table sets one. That optional table
-    ([llm.local.<pass_name>], e.g. temperature or GPT-OSS's reasoning_effort) is
+    ([llm.api.<pass_name>], e.g. temperature or GPT-OSS's reasoning_effort) is
     merged over the JSON-mode baseline — so a user can raise the effort for enrich
     and drop it for clean — but the model/messages/stream/stream_options fields
     the pipeline owns are re-asserted afterward so a stray config key can't
     clobber them.
 
-    Streams the response (see LOCAL_STREAM_RETRIES above for why) and
+    Streams the response (see API_STREAM_RETRIES above for why) and
     reassembles the answer from each chunk's delta.content. Reasoning/thinking
     tokens (confirmed via a live test against Ollama) arrive as a separate
     delta.reasoning field and are never mixed into delta.content, so they're
@@ -449,11 +450,11 @@ def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
     stream_options.include_usage=true (also confirmed supported) makes the
     server send one final chunk with empty choices and a populated usage
     field just before [DONE]; that's mapped into the token tracker at zero
-    cost (local inference is free to us).
+    cost (this backend isn't metered by the pipeline).
 
-    Retries up to LOCAL_STREAM_RETRIES times, LOCAL_STREAM_RETRY_DELAY_S apart,
+    Retries up to API_STREAM_RETRIES times, API_STREAM_RETRY_DELAY_S apart,
     on a connection error or a stream stall — this composes with
-    _retry_local_failures' own single batch-level retry pass, so a call can
+    _retry_api_failures' own single batch-level retry pass, so a call can
     exhaust its retries here and still get one more shot there. Returns the
     assistant message text, or None if every attempt fails so the caller
     falls back gracefully. _extract_json still tolerates stray prose if the
@@ -469,12 +470,12 @@ def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
     "log" scope isn't tied to a specific search's group (see emit_log), so
     no index needs threading through here.
     """
-    url = config.local_base_url.rstrip("/") + "/chat/completions"
+    url = config.api_base_url.rstrip("/") + "/chat/completions"
     headers = {}
-    if config.local_api_key:
-        headers["Authorization"] = f"Bearer {config.local_api_key}"
-    pass_params = (config.local_clean_params if pass_name == "clean"
-                   else config.local_enrich_params)
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+    pass_params = (config.api_clean_params if pass_name == "clean"
+                   else config.api_enrich_params)
     payload = {
         "response_format": {"type": "json_object"},
         **pass_params,
@@ -487,14 +488,14 @@ def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
         "stream_options": {"include_usage": True},
     }
 
-    for attempt in range(1, LOCAL_STREAM_RETRIES + 1):
+    for attempt in range(1, API_STREAM_RETRIES + 1):
         attempt_t0 = time.monotonic()
         reasoning_chunks = 0
         try:
             content_parts: list[str] = []
             usage: dict = {}
             with httpx.stream("POST", url, json=payload, headers=headers,
-                              timeout=config.local_timeout) as resp:
+                              timeout=config.api_timeout) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
@@ -521,17 +522,17 @@ def _run_local_llm(config, pass_name: str, model: str, system_prompt: str,
                 )
         except httpx.HTTPError as exc:
             attempt_elapsed = time.monotonic() - attempt_t0
-            msg = (f"local LLM call failed (attempt {attempt}/{LOCAL_STREAM_RETRIES}, "
+            msg = (f"api LLM call failed (attempt {attempt}/{API_STREAM_RETRIES}, "
                    f"{attempt_elapsed:.0f}s, {reasoning_chunks} reasoning chunk(s) "
                    f"before failure): {exc}")
             print(f"  {msg}", file=sys.stderr)
             emit_log(msg, level="warn")
-            if attempt < LOCAL_STREAM_RETRIES:
-                time.sleep(LOCAL_STREAM_RETRY_DELAY_S)
+            if attempt < API_STREAM_RETRIES:
+                time.sleep(API_STREAM_RETRY_DELAY_S)
                 continue
             return None
         except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
-            msg = f"local LLM returned an unexpected response (attempt {attempt}): {exc}"
+            msg = f"api LLM returned an unexpected response (attempt {attempt}): {exc}"
             print(f"  {msg}", file=sys.stderr)
             emit_log(msg, level="warn")
             return None
@@ -697,15 +698,15 @@ def _timed_clean_one(job: dict) -> tuple[dict | None, float]:
     return result, time.monotonic() - t0
 
 
-def _retry_local_failures(jobs: list[dict], results: list, is_failure,
-                          one_fn, max_workers: int, label: str,
-                          index: int = 1) -> None:
+def _retry_api_failures(jobs: list[dict], results: list, is_failure,
+                        one_fn, max_workers: int, label: str,
+                        index: int = 1) -> None:
     """Retry once, in place, the subset of `results` that `is_failure` flags.
 
-    Local-only: the local backend is the flaky one (occasional generation
-    stalls/timeouts on the local server — observed and documented during
+    Api-only: the api backend is the flaky one (occasional generation
+    stalls/timeouts on the endpoint — observed and documented during
     tuning, not a Claude API issue), so this is called only when
-    config.llm_backend == "local". Re-runs `one_fn` on just the failed jobs'
+    config.llm_backend == "api". Re-runs `one_fn` on just the failed jobs'
     subset (parallel, same max_workers) and overwrites their slot in `results`
     with whatever the retry returns — success or a repeat failure, exactly one
     extra attempt, not a retry loop. A quiet no-op when nothing failed.
@@ -733,9 +734,9 @@ def _retry_local_failures(jobs: list[dict], results: list, is_failure,
 def clean_jobs(jobs: list[dict], index: int = 1) -> None:
     """Clean descriptions in-place (parallel Haiku calls).
 
-    Sets description_clean on each job. On the local backend, a job whose
-    clean_one call fails gets one retry pass (_retry_local_failures) before
-    falling back — the local server's occasional stalls are usually transient,
+    Sets description_clean on each job. On the api backend, a job whose
+    clean_one call fails gets one retry pass (_retry_api_failures) before
+    falling back — the endpoint's occasional stalls are usually transient,
     so a second attempt often succeeds. Still falls back to description_raw if
     the retry also fails, so enrichment always has something to work with.
 
@@ -768,9 +769,9 @@ def clean_jobs(jobs: list[dict], index: int = 1) -> None:
             else:
                 emit_log(f"✓ cleaned {label} ({done}/{len(jobs)}) · {call_elapsed:.0f}s",
                          level="info", index=index)
-    if config.llm_backend == "local":
-        _retry_local_failures(jobs, results, lambda r: r is None, clean_one,
-                              config.max_workers, "clean", index)
+    if config.llm_backend == "api":
+        _retry_api_failures(jobs, results, lambda r: r is None, clean_one,
+                            config.max_workers, "clean", index)
     for job, result in zip(jobs, results):
         job["description_clean"] = (
             (result or {}).get("description_clean") or job.get("description_raw") or ""
@@ -807,7 +808,7 @@ def check_setup() -> None:
     must load (≥1 role, ≥1 linkedin_searches entry), the `claude` CLI must be
     on PATH (Pass 1 shells out to it), profiles/resume.md must exist (every
     kept job is scored against it), any profile file a role references must
-    exist, and — on the local backend — the server must be reachable and
+    exist, and — on the api backend — the endpoint must be reachable and
     serving the configured model.
     """
     try:
@@ -834,8 +835,8 @@ def check_setup() -> None:
             "the 'profile' key(s) to score those roles on the resume alone."
         )
 
-    if config.llm_backend == "local":
-        _verify_local_llm(config)
+    if config.llm_backend == "api":
+        _verify_api_llm(config)
 
 
 def validate_setup() -> None:
@@ -851,28 +852,28 @@ def validate_setup() -> None:
         sys.exit(str(exc))
 
 
-def _verify_local_llm(config) -> None:
-    """Verify the local-LLM server is reachable and serving the configured model.
+def _verify_api_llm(config) -> None:
+    """Verify the configured API endpoint is reachable and serving the model.
 
     Probes the OpenAI-compatible /models endpoint with a short timeout and
-    raises SetupError if the server can't be reached (wrong host / down), if the
+    raises SetupError if the endpoint can't be reached (wrong host / down), if the
     response isn't an OpenAI-compatible model list, or if the list doesn't
-    include [llm.local] model — so a misconfigured backend fails at startup,
+    include [llm.api] model — so a misconfigured backend fails at startup,
     before Pass 1, instead of failing every clean/enrich call mid-run. Only
-    called when the [llm] backend is "local".
+    called when the [llm] backend is "api".
     """
-    url = config.local_base_url.rstrip("/") + "/models"
+    url = config.api_base_url.rstrip("/") + "/models"
     headers = {}
-    if config.local_api_key:
-        headers["Authorization"] = f"Bearer {config.local_api_key}"
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
     try:
         resp = httpx.get(url, headers=headers, timeout=5.0)
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise SetupError(
-            f"Setup error: local LLM server at {config.local_base_url} is "
+            f"Setup error: API endpoint at {config.api_base_url} is "
             f"unreachable ({exc}). Is it running and reachable from this "
-            "machine? Check [llm.local] base_url in profiles/config.toml, or "
+            "machine? Check [llm.api] base_url in profiles/config.toml, or "
             'set [llm] backend = "claude" to use the Claude API instead.'
         )
     try:
@@ -880,26 +881,26 @@ def _verify_local_llm(config) -> None:
         available = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
     except (ValueError, AttributeError, TypeError) as exc:
         raise SetupError(
-            f"Setup error: local LLM server at {config.local_base_url} returned "
+            f"Setup error: API endpoint at {config.api_base_url} returned "
             f"an unexpected /models response ({exc}). Is base_url pointing at an "
             "OpenAI-compatible endpoint (usually one ending in /v1)?"
         )
-    if config.local_model not in available:
+    if config.api_model not in available:
         listed = ", ".join(sorted(available)) or "none"
         raise SetupError(
-            f"Setup error: local LLM server at {config.local_base_url} does not "
-            f"serve a model with the exact id {config.local_model!r} (it serves: "
-            f"{listed}). [llm.local] model must match one of those ids exactly, "
+            f"Setup error: API endpoint at {config.api_base_url} does not "
+            f"serve a model with the exact id {config.api_model!r} (it serves: "
+            f"{listed}). [llm.api] model must match one of those ids exactly, "
             'including any tag — e.g. "scout-enrich:latest", not "scout-enrich". '
             "Copy the id from your server's model list (for Ollama, `ollama "
             f"list`), or pull it if it's missing (e.g. `ollama pull "
-            f"{config.local_model}`)."
+            f"{config.api_model}`)."
         )
 
 
 # The run-start warm-up absorbs the one-time cold model load. It gets its own
 # timeout and retry budget, independent of the (deliberately tight) per-call
-# [llm.local] timeout: WARMUP_TIMEOUT_S per attempt, WARMUP_ATTEMPTS attempts.
+# [llm.api] timeout: WARMUP_TIMEOUT_S per attempt, WARMUP_ATTEMPTS attempts.
 # Loading a model into memory has been observed at ~1 min, so a ~1 min per-attempt
 # cap plus a couple of retries recovers a server that crashed on the first
 # request — without making a wedged server hang the run for many minutes (the
@@ -907,11 +908,11 @@ def _verify_local_llm(config) -> None:
 WARMUP_TIMEOUT_S = 60
 WARMUP_ATTEMPTS = 3
 
-# _warm_local_llm's max_tokens=1 ping only forces the model weights into VRAM
+# _warm_api_llm's max_tokens=1 ping only forces the model weights into VRAM
 # — it doesn't exercise prefill/KV-cache cost for a real-sized prompt (real
 # descriptions run 5-13 KB, per this module's docstring), which is where the
-# very first real clean call was observed to time out on a cold local server.
-# _warm_up_clean_pass follows it with one real clean_one() call against a
+# very first real clean call was observed to time out on a cold api-backend
+# server. _warm_up_clean_pass follows it with one real clean_one() call against a
 # similarly-sized synthetic description, retrying WARMUP_CLEAN_RETRIES times
 # with a WARMUP_CLEAN_RETRY_DELAY_S pause between attempts. Unlike the ping
 # warm-up, failure here is fatal (see _warm_up_clean_pass) — if the model
@@ -923,10 +924,10 @@ WARMUP_CLEAN_RETRY_DELAY_S = 5
 _WARMUP_FAKE_DESCRIPTION = "We are looking for a Senior Software Engineer to join our team. " * 80
 
 
-def _warm_local_llm(config) -> None:
-    """Fire one tiny generation so the local model loads before the timed passes.
+def _warm_api_llm(config) -> None:
+    """Fire one tiny generation so the model loads before the timed passes.
 
-    The setup check (_verify_local_llm) only lists /models — it runs no
+    The setup check (_verify_api_llm) only lists /models — it runs no
     inference, so the first real clean call is otherwise where the model loads
     into VRAM and warms its compute graph. That one-time cost can be minutes and
     can even exceed the per-call timeout, making the first job time out and fall
@@ -937,19 +938,19 @@ def _warm_local_llm(config) -> None:
     stalls or crashes the server) is absorbed here instead of costing a real
     job. Failures are non-fatal: the real clean/enrich calls still retry and
     fall back, so a warm-up problem never aborts the run. Only called on the
-    local backend.
+    api backend.
     """
-    url = config.local_base_url.rstrip("/") + "/chat/completions"
+    url = config.api_base_url.rstrip("/") + "/chat/completions"
     headers = {}
-    if config.local_api_key:
-        headers["Authorization"] = f"Bearer {config.local_api_key}"
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
     payload = {
-        "model": config.local_model,
+        "model": config.api_model,
         "messages": [{"role": "user", "content": "ping"}],
         "max_tokens": 1,
         "stream": False,
     }
-    emit_log("Warming local model…", level="head")
+    emit_log("Warming model…", level="head")
     t0 = time.monotonic()
     for attempt in range(1, WARMUP_ATTEMPTS + 1):
         try:
@@ -957,13 +958,13 @@ def _warm_local_llm(config) -> None:
                               timeout=WARMUP_TIMEOUT_S)
             resp.raise_for_status()
             resp.json()
-            emit_log(f"Local model ready ({time.monotonic() - t0:.0f}s)",
+            emit_log(f"Model ready ({time.monotonic() - t0:.0f}s)",
                      level="good")
             return
         except (httpx.HTTPError, ValueError) as exc:
-            print(f"  local model warm-up attempt {attempt} failed: {exc}",
+            print(f"  model warm-up attempt {attempt} failed: {exc}",
                   file=sys.stderr)
-    emit_log("Local model warm-up failed — continuing (calls will retry)",
+    emit_log("Model warm-up failed — continuing (calls will retry)",
              level="warn")
 
 
@@ -971,11 +972,11 @@ def _warm_up_clean_pass(config) -> None:
     """Run one real clean_one() call against a realistically-sized fake job.
 
     See the WARMUP_CLEAN_* constants above for why this exists on top of
-    _warm_local_llm. Retries WARMUP_CLEAN_RETRIES times with a
+    _warm_api_llm. Retries WARMUP_CLEAN_RETRIES times with a
     WARMUP_CLEAN_RETRY_DELAY_S pause between attempts; if every attempt
     fails, aborts the whole run (sys.exit(1)) rather than proceeding to a
     browser scrape whose clean/enrich passes would likely all fail the same
-    way. Local backend only.
+    way. Api backend only.
     """
     fake_job = {"job_id": "warmup", "description_raw": _WARMUP_FAKE_DESCRIPTION}
     for attempt in range(1, WARMUP_CLEAN_RETRIES + 1):
@@ -987,10 +988,10 @@ def _warm_up_clean_pass(config) -> None:
         if attempt < WARMUP_CLEAN_RETRIES:
             time.sleep(WARMUP_CLEAN_RETRY_DELAY_S)
 
-    msg = (f"Local model failed to clean a realistically-sized warm-up job "
+    msg = (f"Model failed to clean a realistically-sized warm-up job "
            f"after {WARMUP_CLEAN_RETRIES} attempts — aborting before Pass 1. "
-           f"Check the local server at {config.local_base_url} (model "
-           f"{config.local_model!r}) is healthy and [llm.local] timeout is "
+           f"Check the API endpoint at {config.api_base_url} (model "
+           f"{config.api_model!r}) is healthy and [llm.api] timeout is "
            f"generous enough for a full-size prompt.")
     print(f"ERROR: {msg}", file=sys.stderr)
     logging.getLogger("scout").error(msg)
@@ -1177,7 +1178,7 @@ def _log_enrich_outcome(job: dict, res: dict, index: int) -> None:
     Distinguishes the three outcomes honestly: a scored keep, a genuine "Other"
     drop, and an outright call failure (res == _ENRICH_FAILURE) — the last logs
     as a warning rather than masquerading as an "Other" classification, since on
-    the local backend it may still be recovered by the retry pass.
+    the api backend it may still be recovered by the retry pass.
     """
     label = f"{job.get('title') or '?'} @ {job.get('company') or '?'}"
     if res == _ENRICH_FAILURE:
@@ -1195,9 +1196,9 @@ def _log_enrich_outcome(job: dict, res: dict, index: int) -> None:
 def enrich_jobs(jobs: list[dict], index: int = 1) -> None:
     """Enrich each job in-place with role_type, summary, tags, and match scores.
 
-    One headless Sonnet call per job, run in parallel. On the local backend, a
+    One headless Sonnet call per job, run in parallel. On the api backend, a
     job whose enrich_one call fails outright gets one retry pass
-    (_retry_local_failures) before its result is applied — the local server's
+    (_retry_api_failures) before its result is applied — the endpoint's
     occasional stalls are usually transient, so a second attempt often
     succeeds instead of the job being dropped for nothing.
 
@@ -1214,8 +1215,8 @@ def enrich_jobs(jobs: list[dict], index: int = 1) -> None:
     max_workers = config.max_workers
     results: list[dict] = [None] * len(jobs)
     done = 0
-    if config.llm_backend == "local":
-        # The local backend has no Anthropic prompt cache to warm, so the
+    if config.llm_backend == "api":
+        # The api backend has no Anthropic prompt cache to warm, so the
         # serial-first-call + sleep below would just add latency. Run the whole
         # batch straight through the pool.
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -1226,8 +1227,8 @@ def enrich_jobs(jobs: list[dict], index: int = 1) -> None:
                 done += 1
                 _emit_enrich_progress(index, done, len(jobs))
                 _log_enrich_outcome(jobs[i], results[i], index)
-        _retry_local_failures(jobs, results, lambda r: r == _ENRICH_FAILURE,
-                              enrich_one, max_workers, "enrich", index)
+        _retry_api_failures(jobs, results, lambda r: r == _ENRICH_FAILURE,
+                            enrich_one, max_workers, "enrich", index)
     else:
         # Warm the Anthropic prompt cache with one serial call, then pause
         # briefly before firing the parallel wave. Parallel calls that start
@@ -1454,24 +1455,24 @@ def main() -> None:
              "on" if _log_model_calls else "off")
 
     # Tell the drawer which backend/models are driving this run. Pass 1 (the
-    # browser scrape) always runs on Claude even when Pass 2/3 are local.
+    # browser scrape) always runs on Claude even when Pass 2/3 are on the api backend.
     config = load_config()
-    is_local = config.llm_backend == "local"
+    is_api = config.llm_backend == "api"
     models = {
         "scrape": SCRAPER_MODEL,
-        "clean": config.local_model if is_local else CLEAN_MODEL,
-        "enrich": config.local_model if is_local else ENRICH_MODEL,
+        "clean": config.api_model if is_api else CLEAN_MODEL,
+        "enrich": config.api_model if is_api else ENRICH_MODEL,
     }
     emit(scope="meta", backend=config.llm_backend, models=models)
     emit_log(f"Run started · backend={config.llm_backend}", level="head")
 
-    # Load/warm the local model now (before Pass 1) rather than letting the
-    # first clean call eat the multi-minute cold start — see _warm_local_llm.
+    # Load/warm the model now (before Pass 1) rather than letting the
+    # first clean call eat the multi-minute cold start — see _warm_api_llm.
     # _warm_up_clean_pass follows with a real, realistically-sized clean call
     # so a server that can't handle full-size prompts fails here, not silently
     # mid-run — see its docstring.
-    if is_local:
-        _warm_local_llm(config)
+    if is_api:
+        _warm_api_llm(config)
         _warm_up_clean_pass(config)
 
     emit(scope="global", key="start", status="done")

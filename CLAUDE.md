@@ -74,7 +74,7 @@ generic culture/benefits marketing, "About [Company]" fluff — and returns a si
 `{"description_clean": "..."}` JSON field. Runs `MAX_WORKERS`-wide via a
 `ThreadPoolExecutor`. A failed call falls back to the raw description so Pass 3
 always has something to work with. On the Claude backend this is Haiku
-(`CLEAN_MODEL`); on the local backend it's the configured `[llm.local] model`.
+(`CLEAN_MODEL`); on the api backend it's the configured `[llm.api] model`.
 
 ### Pass 3 — per-job enrichment (Sonnet, parallel), `agent/enrichment_prompt.md`
 For each survivor, one headless `claude --print` Sonnet call classifies the role into
@@ -98,18 +98,18 @@ optional section, `[scrape]`, carries `download_dir` — where the browser saves
 the scrape blob; it defaults to `~/Downloads` (correct on Windows/macOS/Linux)
 and `runner.download_dir()` expands it, so it's the only config path with a
 cross-platform default rather than failing loudly. `[llm]` carries `backend`
-(required, `"claude"` or `"local"` — no default, so the config always states
+(required, `"claude"` or `"api"` — no default, so the config always states
 which one) which selects the backend for the two **headless** passes —
 description cleaning and enrichment/scoring — via `runner.run_headless()`, and
-`max_workers` (required, the Pass 2/3 pool width, tuned per backend). `"local"`
-routes both passes (together, never split) to a local OpenAI-compatible server
-(e.g. Ollama) configured under `[llm.local]` (`base_url`, `model`, optional
-`api_key`/`timeout`). Two optional per-pass sub-tables, `[llm.local.clean]` and
-`[llm.local.enrich]`, carry request parameters (e.g. `temperature`,
+`max_workers` (required, the Pass 2/3 pool width, tuned per backend). `"api"`
+routes both passes (together, never split) to any OpenAI-compatible endpoint
+(e.g. Ollama, local or remote) configured under `[llm.api]` (`base_url`, `model`,
+optional `api_key`/`timeout`). Two optional per-pass sub-tables, `[llm.api.clean]`
+and `[llm.api.enrich]`, carry request parameters (e.g. `temperature`,
 `reasoning_effort`) merged verbatim into that pass's chat-completion JSON by
-`runner._run_local_llm`; values must be scalars and may not set the
+`runner._run_api_llm`; values must be scalars and may not set the
 pipeline-owned `model`/`messages`/`stream` keys (validated in
-`config._parse_local_params`). The browser scrape always runs on Claude.
+`config._parse_api_params`). The browser scrape always runs on Claude.
 Each role carries the classification definition injected into the prompt's
 `{{ROLE_DEFINITIONS}}`/`{{ROLE_ENUM}}` placeholders, an optional per-role profile
 file for scoring, and drives the UI filter buttons and chip colors. `jobs.role_type`
@@ -152,9 +152,9 @@ tool-definition path is available but not on the main flow.
 - **Every Python function must have a docstring** — this is a hard project rule; the
   codebase follows it uniformly.
 - Claude model IDs are pinned as constants in `runner.py` (`SCRAPER_MODEL` and
-  `CLEAN_MODEL` = Haiku, `ENRICH_MODEL` = Sonnet); the local-backend model comes
-  from `[llm.local] model` in the config instead. Each `claude` subprocess has a
-  `SUBPROCESS_TIMEOUT_S` wall-clock kill (local calls use `[llm.local] timeout`);
+  `CLEAN_MODEL` = Haiku, `ENRICH_MODEL` = Sonnet); the api-backend model comes
+  from `[llm.api] model` in the config instead. Each `claude` subprocess has a
+  `SUBPROCESS_TIMEOUT_S` wall-clock kill (api calls use `[llm.api] timeout`);
   the web UI adds a 30-minute overall guardrail.
 - Tests add the project root to `sys.path` via `tests/conftest.py`; import as
   `from app...` / `from agent...`.

@@ -484,7 +484,7 @@ async def trigger_run(
     """Start a Scout run in the background and return the run drawer partial.
 
     Runs the same setup checks the CLI runs (check_setup) synchronously first,
-    so a broken config or an unreachable / wrong-model local-LLM backend
+    so a broken config or an unreachable / wrong-model api backend
     surfaces in the drawer immediately — before any subprocess, browser, or
     scrape work is started and wasted.
     """

@@ -2,12 +2,11 @@
 
 Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any
 **OpenAI-compatible** server instead of the :simple-claude:{ .claude } Claude
-API. That's broader than "local": :simple-ollama: [Ollama](https://ollama.com)
-running on your own box is the common case (free, fully private), but the
-same config also works with a **remote** OpenAI-compatible API — e.g.
-[Kimi](https://www.moonshot.ai/) — if you'd rather not run a server yourself.
-Pass 1 always runs on Claude, because it's an agentic browser task a text
-model can't do.
+API. :simple-ollama: [Ollama](https://ollama.com) running on your own box is
+the common case (free, fully private), but the same config also works with a
+**remote** OpenAI-compatible API — e.g. [Kimi](https://www.moonshot.ai/) — if
+you'd rather not run a server yourself. Pass 1 always runs on Claude, because
+it's an agentic browser task a text model can't do.
 
 <div class="grid cards" markdown>
 
@@ -37,25 +36,25 @@ model can't do.
 
 ```toml
 [llm]
-backend = "local"
+backend = "api"
 max_workers = 1                 # tune to your GPU; a 16GB box may want 1
 
-[llm.local]
+[llm.api]
 base_url = "http://localhost:11434/v1"
 model    = "gpt-oss:20b"        # must match the server's model id exactly
 timeout  = 45                   # per-call seconds; stalls fail fast and retry
 
-[llm.local.clean]               # optional per-pass request params,
+[llm.api.clean]                 # optional per-pass request params,
 reasoning_effort = "low"        # merged verbatim into the API call
 
-[llm.local.enrich]
+[llm.api.enrich]
 reasoning_effort = "medium"
 ```
 
-`backend = "local"` and the `[llm.local]` table are the config keys regardless
-of whether the endpoint is actually local — they just mean "not Claude." Swap
+`backend = "api"` and the `[llm.api]` table are the config keys regardless
+of whether the endpoint is local or remote — they just mean "not Claude." Swap
 `base_url`/`model` for a remote provider's OpenAI-compatible endpoint and the
-same config works unchanged. See the [`[llm.local]` reference](getting-started.md)
+same config works unchanged. See the [`[llm.api]` reference](getting-started.md)
 for the full field reference, including the required vs. optional keys and
 what happens if `model` doesn't match what the server reports.
 
@@ -69,7 +68,7 @@ box — whether that's a home GPU or a remote API having a bad day:
   and retries — so a cold-start model load doesn't eat into (or fail) the
   first real call.
 - **Tight per-call timeouts.** Each Pass 2/3 call has a short timeout
-  (`[llm.local] timeout`), so a stalled generation fails fast instead of
+  (`[llm.api] timeout`), so a stalled generation fails fast instead of
   hanging the run.
 - **One retry pass.** Every failed call gets one parallel retry pass before
   falling back gracefully — a job that still fails cleaning proceeds with

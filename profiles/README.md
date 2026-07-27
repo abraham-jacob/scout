@@ -35,7 +35,7 @@ download_dir = "~/Downloads"        # Chrome's download folder. Defaults to
                                     # ~/Downloads (works on Win/Mac/Linux).
 
 [llm]                               # REQUIRED
-backend = "claude"                  # "claude" or "local" (no default)
+backend = "claude"                  # "claude" or "api" (no default)
 max_workers = 2                     # Pass 2/3 parallelism; tune to the backend
 ```
 
@@ -43,30 +43,31 @@ max_workers = 2                     # Pass 2/3 parallelism; tune to the backend
 
 `backend` says which model backend runs the two headless passes — description
 cleaning (Pass 2) and enrichment/scoring (Pass 3). There's no default: you must
-state `"claude"` or `"local"` explicitly, so the config always says which one is
+state `"claude"` or `"api"` explicitly, so the config always says which one is
 in use. Pass 1 (the browser scrape) always runs on Claude — it drives the
-browser and can't move to a local text model.
+browser and can't move to a text-completion model.
 
 `max_workers` is the width of the Pass 2/3 worker pool (a positive integer).
 Tune it to the active backend: a Claude run can go wide (it's bounded mainly by
-prompt-cache-write dedup, default 2), while a local server is bounded by its own
-VRAM/throughput — a 16GB box running a 20B model may only manage `max_workers = 1`.
+prompt-cache-write dedup, default 2), while an api-backend server is bounded by
+its own VRAM/throughput — a 16GB box running a 20B model may only manage
+`max_workers = 1`.
 
-Set `backend = "local"` to route both headless passes to a **local
-OpenAI-compatible server** such as [Ollama](https://ollama.com), cutting API cost
-to zero for them. It's all-or-nothing: both passes move together. Add a
-`[llm.local]` subsection:
+Set `backend = "api"` to route both headless passes to any **OpenAI-compatible
+chat-completions endpoint** — local (e.g. [Ollama](https://ollama.com)) or
+remote (a hosted API) — cutting Claude API cost for them. It's all-or-nothing:
+both passes move together. Add a `[llm.api]` subsection:
 
 ```toml
 [llm]
-backend = "local"
+backend = "api"
 max_workers = 1                             # local box; keep it low
 
-[llm.local]
+[llm.api]                                   # any OpenAI-compatible chat-completions endpoint
 base_url = "http://192.168.1.50:11434/v1"   # your server's OpenAI-compatible endpoint
 model    = "scout-enrich:latest"             # EXACT id from the server's model list
 # api_key = "ollama"    # optional; Ollama ignores it, other servers may need it
-# timeout = 300         # optional, seconds (default 300) — local inference can be slow
+# timeout = 300         # optional, seconds (default 300) — inference can be slow
 ```
 
 `base_url` and `model` are required in this mode. `model` must be the **exact
@@ -83,18 +84,18 @@ the ids the server currently serves so you can copy the right one.
 #### Per-pass request parameters (optional)
 
 Two optional sub-tables let you pass request parameters to the server per pass —
-`[llm.local.clean]` for description cleaning (Pass 2) and `[llm.local.enrich]`
+`[llm.api.clean]` for description cleaning (Pass 2) and `[llm.api.enrich]`
 for enrichment/scoring (Pass 3). Each key/value is merged **verbatim** into that
 pass's chat-completion JSON, so you can set anything the server accepts. The
 motivating case is a reasoning model like GPT-OSS: give the mechanical cleaning
 pass low effort and the scoring pass high effort.
 
 ```toml
-[llm.local.clean]
+[llm.api.clean]
 temperature = 0
 reasoning_effort = "low"      # cleaning is mechanical — don't burn thinking on it
 
-[llm.local.enrich]
+[llm.api.enrich]
 temperature = 0
 reasoning_effort = "high"     # scoring is judgment — let it think
 ```

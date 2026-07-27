@@ -87,8 +87,8 @@ culture/benefits marketing, "About [Company]" fluff — driven by
 `agent/clean_prompt.md` and returning a single `{"description_clean": "..."}`
 field. This runs `max_workers`-wide via a thread pool. A failed call falls
 back to the raw description, so Pass 3 always has something to work with. On
-the Claude backend this pass runs on Haiku; on the local backend it runs on
-whatever model is configured under `[llm.local]`.
+the Claude backend this pass runs on Haiku; on the api backend it runs on
+whatever model is configured under `[llm.api]`.
 
 ## Pass 3 — per-job enrichment and scoring (Sonnet or OpenAI API, parallel)
 
@@ -145,7 +145,7 @@ finishes.
 
 **Failing loudly, recovering quietly.** Config validation raises on the
 first problem instead of silently defaulting; setup checks verify the
-Claude CLI, resume, and profile files (and local-LLM reachability, if
+Claude CLI, resume, and profile files (and API-backend reachability, if
 configured) before any browser work starts; each subprocess has a hard
-wall-clock kill; local-LLM calls get tight timeouts, one retry pass, and
+wall-clock kill; API-backend calls get tight timeouts, one retry pass, and
 graceful fallbacks.

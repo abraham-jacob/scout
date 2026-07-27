@@ -9,10 +9,10 @@ off to the pipeline via a browser file download (see
 a save-location dialog, the agent can't dismiss it and the run stalls waiting
 for a file that never lands.
 
-## The pipeline refuses to start with a local-LLM error
+## The pipeline refuses to start with an API-backend error
 
-Setup validation pings your `[llm.local] base_url` and checks that it's
-serving the exact `[llm.local] model` id you configured, before any browser
+Setup validation pings your `[llm.api] base_url` and checks that it's
+serving the exact `[llm.api] model` id you configured, before any browser
 work starts — so this fails fast rather than mid-run. The error message
 prints the model ids the server actually reports; copy one of those verbatim
 into `model`, including the tag (e.g. `scout-enrich:latest`, not

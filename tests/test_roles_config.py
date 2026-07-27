@@ -277,14 +277,14 @@ class TestDownloadDirResolution:
 
 
 class TestLlmSection:
-    """Test the required [llm] section and optional [llm.local] subsection."""
+    """Test the required [llm] section and optional [llm.api] subsection."""
 
-    def _local(self, extra_llm="", local_body=None):
-        """Build a config: roles + non-llm boilerplate + a local [llm] block."""
-        if local_body is None:
-            local_body = ('[llm.local]\nbase_url = "http://box:11434/v1"\n'
-                          'model = "gpt-oss:20b"\n')
-        llm = f'[llm]\nbackend = "local"\nmax_workers = 2\n{extra_llm}\n{local_body}'
+    def _api(self, extra_llm="", api_body=None):
+        """Build a config: roles + non-llm boilerplate + an api [llm] block."""
+        if api_body is None:
+            api_body = ('[llm.api]\nbase_url = "http://box:11434/v1"\n'
+                        'model = "gpt-oss:20b"\n')
+        llm = f'[llm]\nbackend = "api"\nmax_workers = 2\n{extra_llm}\n{api_body}'
         _write_config(ROLES_ONLY + BOILERPLATE_NO_LLM + "\n" + llm,
                       boilerplate=False)
 
@@ -302,14 +302,14 @@ class TestLlmSection:
             load_config()
 
     def test_explicit_claude_backend(self):
-        """backend = "claude" with max_workers and no [llm.local] is fine."""
+        """backend = "claude" with max_workers and no [llm.api] is fine."""
         _write_config(ROLES_ONLY + BOILERPLATE_NO_LLM
                       + '\n[llm]\nbackend = "claude"\nmax_workers = 4\n',
                       boilerplate=False)
         config = load_config()
         assert config.llm_backend == "claude"
         assert config.max_workers == 4
-        assert config.local_base_url is None
+        assert config.api_base_url is None
 
     def test_missing_max_workers_raises(self):
         """[llm] without max_workers is an error — the width must be explicit."""
@@ -334,26 +334,26 @@ class TestLlmSection:
         with pytest.raises(ValueError, match="integer 'max_workers'"):
             load_config()
 
-    def test_local_backend_parses(self):
-        """A full [llm.local] section populates every local field."""
-        self._local(local_body=('[llm.local]\nbase_url = "http://box:11434/v1"\n'
-                                 'model = "gpt-oss:20b"\napi_key = "secret"\n'
-                                 'timeout = 120\n'))
+    def test_api_backend_parses(self):
+        """A full [llm.api] section populates every api field."""
+        self._api(api_body=('[llm.api]\nbase_url = "http://box:11434/v1"\n'
+                             'model = "gpt-oss:20b"\napi_key = "secret"\n'
+                             'timeout = 120\n'))
         config = load_config()
-        assert config.llm_backend == "local"
+        assert config.llm_backend == "api"
         assert config.max_workers == 2
-        assert config.local_base_url == "http://box:11434/v1"
-        assert config.local_model == "gpt-oss:20b"
-        assert config.local_api_key == "secret"
-        assert config.local_timeout == 120.0
+        assert config.api_base_url == "http://box:11434/v1"
+        assert config.api_model == "gpt-oss:20b"
+        assert config.api_key == "secret"
+        assert config.api_timeout == 120.0
 
-    def test_local_backend_optional_fields_default(self):
-        """api_key defaults to None and timeout to DEFAULT_LOCAL_TIMEOUT."""
-        from app.config import DEFAULT_LOCAL_TIMEOUT
-        self._local()
+    def test_api_backend_optional_fields_default(self):
+        """api_key defaults to None and timeout to DEFAULT_API_TIMEOUT."""
+        from app.config import DEFAULT_API_TIMEOUT
+        self._api()
         config = load_config()
-        assert config.local_api_key is None
-        assert config.local_timeout == DEFAULT_LOCAL_TIMEOUT
+        assert config.api_key is None
+        assert config.api_timeout == DEFAULT_API_TIMEOUT
 
     def test_invalid_backend_raises(self):
         """An unknown backend name is a config error, not a silent default."""
@@ -363,65 +363,65 @@ class TestLlmSection:
         with pytest.raises(ValueError, match="must be one of"):
             load_config()
 
-    def test_local_without_local_section_raises(self):
-        """backend = "local" needs a [llm.local] section."""
+    def test_api_without_api_section_raises(self):
+        """backend = "api" needs a [llm.api] section."""
         _write_config(ROLES_ONLY + BOILERPLATE_NO_LLM
-                      + '\n[llm]\nbackend = "local"\nmax_workers = 2\n',
+                      + '\n[llm]\nbackend = "api"\nmax_workers = 2\n',
                       boilerplate=False)
-        with pytest.raises(ValueError, match=r"\[llm\.local\]"):
+        with pytest.raises(ValueError, match=r"\[llm\.api\]"):
             load_config()
 
-    def test_local_missing_base_url_raises(self):
-        """[llm.local] without base_url is an error."""
-        self._local(local_body='[llm.local]\nmodel = "gpt-oss:20b"\n')
+    def test_api_missing_base_url_raises(self):
+        """[llm.api] without base_url is an error."""
+        self._api(api_body='[llm.api]\nmodel = "gpt-oss:20b"\n')
         with pytest.raises(ValueError, match="base_url"):
             load_config()
 
-    def test_local_missing_model_raises(self):
-        """[llm.local] without model is an error."""
-        self._local(local_body='[llm.local]\nbase_url = "http://box:11434/v1"\n')
+    def test_api_missing_model_raises(self):
+        """[llm.api] without model is an error."""
+        self._api(api_body='[llm.api]\nbase_url = "http://box:11434/v1"\n')
         with pytest.raises(ValueError, match="base_url.*model|model"):
             load_config()
 
-    def test_local_nonpositive_timeout_raises(self):
+    def test_api_nonpositive_timeout_raises(self):
         """A zero/negative timeout is a config error."""
-        self._local(local_body=('[llm.local]\nbase_url = "http://box:11434/v1"\n'
-                                 'model = "gpt-oss:20b"\ntimeout = 0\n'))
+        self._api(api_body=('[llm.api]\nbase_url = "http://box:11434/v1"\n'
+                             'model = "gpt-oss:20b"\ntimeout = 0\n'))
         with pytest.raises(ValueError, match="timeout"):
             load_config()
 
-    def test_local_per_pass_params_default_empty(self):
-        """Without [llm.local.clean]/[llm.local.enrich], both param dicts are {}."""
-        self._local()
+    def test_api_per_pass_params_default_empty(self):
+        """Without [llm.api.clean]/[llm.api.enrich], both param dicts are {}."""
+        self._api()
         config = load_config()
-        assert config.local_clean_params == {}
-        assert config.local_enrich_params == {}
+        assert config.api_clean_params == {}
+        assert config.api_enrich_params == {}
 
-    def test_local_per_pass_params_parse(self):
-        """[llm.local.clean]/[llm.local.enrich] scalars land verbatim per pass."""
-        self._local(local_body=(
-            '[llm.local]\nbase_url = "http://box:11434/v1"\nmodel = "m"\n'
-            '[llm.local.clean]\ntemperature = 0\nreasoning_effort = "low"\n'
-            '[llm.local.enrich]\ntemperature = 0.3\nreasoning_effort = "high"\n'))
+    def test_api_per_pass_params_parse(self):
+        """[llm.api.clean]/[llm.api.enrich] scalars land verbatim per pass."""
+        self._api(api_body=(
+            '[llm.api]\nbase_url = "http://box:11434/v1"\nmodel = "m"\n'
+            '[llm.api.clean]\ntemperature = 0\nreasoning_effort = "low"\n'
+            '[llm.api.enrich]\ntemperature = 0.3\nreasoning_effort = "high"\n'))
         config = load_config()
-        assert config.local_clean_params == {"temperature": 0,
-                                             "reasoning_effort": "low"}
-        assert config.local_enrich_params == {"temperature": 0.3,
-                                              "reasoning_effort": "high"}
+        assert config.api_clean_params == {"temperature": 0,
+                                           "reasoning_effort": "low"}
+        assert config.api_enrich_params == {"temperature": 0.3,
+                                            "reasoning_effort": "high"}
 
-    def test_local_per_pass_reserved_key_raises(self):
+    def test_api_per_pass_reserved_key_raises(self):
         """A param table may not set a field the request builder owns."""
-        self._local(local_body=(
-            '[llm.local]\nbase_url = "http://box:11434/v1"\nmodel = "m"\n'
-            '[llm.local.enrich]\nmodel = "sneaky"\n'))
+        self._api(api_body=(
+            '[llm.api]\nbase_url = "http://box:11434/v1"\nmodel = "m"\n'
+            '[llm.api.enrich]\nmodel = "sneaky"\n'))
         with pytest.raises(ValueError, match="may not set 'model'"):
             load_config()
 
-    def test_local_per_pass_nonscalar_raises(self):
+    def test_api_per_pass_nonscalar_raises(self):
         """A nested table/array as a param value is rejected."""
-        self._local(local_body=(
-            '[llm.local]\nbase_url = "http://box:11434/v1"\nmodel = "m"\n'
-            '[llm.local.clean]\nstop = ["a", "b"]\n'))
+        self._api(api_body=(
+            '[llm.api]\nbase_url = "http://box:11434/v1"\nmodel = "m"\n'
+            '[llm.api.clean]\nstop = ["a", "b"]\n'))
         with pytest.raises(ValueError, match="must be a scalar"):
             load_config()
 
@@ -494,7 +494,7 @@ class TestValidateSetup:
         """Point runner at tmp_path profiles, optionally creating resume.md.
 
         Also stubs claude_executable() so these tests exercise the
-        resume/profile/local-backend checks in isolation, independent of
+        resume/profile/api-backend checks in isolation, independent of
         whether the `claude` CLI happens to be installed on the machine
         running the suite (it won't be in CI).
         """
@@ -533,21 +533,21 @@ class TestValidateSetup:
         with pytest.raises(SystemExit, match="nope.md"):
             runner.validate_setup()
 
-    _LOCAL_CONFIG = """
+    _API_CONFIG = """
 [llm]
-backend = "local"
+backend = "api"
 max_workers = 2
 
-[llm.local]
+[llm.api]
 base_url = "http://box:11434/v1"
 model = "gpt-oss:20b"
 """
 
-    def test_local_backend_probes_reachable_server(self, tmp_path, monkeypatch):
+    def test_api_backend_probes_reachable_server(self, tmp_path, monkeypatch):
         """A reachable server serving the model passes the startup probe."""
         self._setup(tmp_path, monkeypatch)
         _write_config('[[roles]]\nname = "PM"\ndefinition = "products"\n'
-                      + BOILERPLATE_NO_LLM + self._LOCAL_CONFIG, boilerplate=False)
+                      + BOILERPLATE_NO_LLM + self._API_CONFIG, boilerplate=False)
         probed = {}
 
         def _fake_get(url, **kwargs):
@@ -559,11 +559,11 @@ model = "gpt-oss:20b"
         runner.validate_setup()  # must not raise
         assert probed["url"] == "http://box:11434/v1/models"
 
-    def test_local_backend_unreachable_exits(self, tmp_path, monkeypatch):
-        """An unreachable local server aborts the run before Pass 1."""
+    def test_api_backend_unreachable_exits(self, tmp_path, monkeypatch):
+        """An unreachable API endpoint aborts the run before Pass 1."""
         self._setup(tmp_path, monkeypatch)
         _write_config('[[roles]]\nname = "PM"\ndefinition = "products"\n'
-                      + BOILERPLATE_NO_LLM + self._LOCAL_CONFIG, boilerplate=False)
+                      + BOILERPLATE_NO_LLM + self._API_CONFIG, boilerplate=False)
 
         def _boom(url, **kwargs):
             raise httpx.ConnectError("refused")
@@ -572,11 +572,11 @@ model = "gpt-oss:20b"
         with pytest.raises(SystemExit, match="unreachable"):
             runner.validate_setup()
 
-    def test_local_backend_missing_model_exits(self, tmp_path, monkeypatch):
+    def test_api_backend_missing_model_exits(self, tmp_path, monkeypatch):
         """A reachable server that doesn't serve the model aborts before Pass 1."""
         self._setup(tmp_path, monkeypatch)
         _write_config('[[roles]]\nname = "PM"\ndefinition = "products"\n'
-                      + BOILERPLATE_NO_LLM + self._LOCAL_CONFIG, boilerplate=False)
+                      + BOILERPLATE_NO_LLM + self._API_CONFIG, boilerplate=False)
 
         def _fake_get(url, **kwargs):
             return Mock(raise_for_status=lambda: None,
@@ -586,11 +586,11 @@ model = "gpt-oss:20b"
         with pytest.raises(SystemExit, match="does not serve a model with the exact id"):
             runner.validate_setup()
 
-    def test_local_backend_bad_models_response_exits(self, tmp_path, monkeypatch):
+    def test_api_backend_bad_models_response_exits(self, tmp_path, monkeypatch):
         """A non-OpenAI /models response is a setup error, not a crash."""
         self._setup(tmp_path, monkeypatch)
         _write_config('[[roles]]\nname = "PM"\ndefinition = "products"\n'
-                      + BOILERPLATE_NO_LLM + self._LOCAL_CONFIG, boilerplate=False)
+                      + BOILERPLATE_NO_LLM + self._API_CONFIG, boilerplate=False)
 
         def _fake_get(url, **kwargs):
             return Mock(raise_for_status=lambda: None,
@@ -604,7 +604,7 @@ model = "gpt-oss:20b"
         """check_setup raises SetupError (not SystemExit) for the UI to catch."""
         self._setup(tmp_path, monkeypatch)
         _write_config('[[roles]]\nname = "PM"\ndefinition = "products"\n'
-                      + BOILERPLATE_NO_LLM + self._LOCAL_CONFIG, boilerplate=False)
+                      + BOILERPLATE_NO_LLM + self._API_CONFIG, boilerplate=False)
 
         def _boom(url, **kwargs):
             raise httpx.ConnectError("refused")
