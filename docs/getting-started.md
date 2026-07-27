@@ -9,9 +9,9 @@ Scout is a personal, single-user tool. Before you start, make sure you have:
 | **:simple-python:{ .python } Python 3.12** + [pipenv](https://pipenv.pypa.io/) | Runtime & dependency management |
 | **:simple-git:{ .git } Git** | To clone the repo |
 | **:simple-googlechrome:{ .chrome } Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
-| **:simple-claude:{ .claude } [Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at a local model |
+| **:simple-claude:{ .claude } [Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at an OpenAI-compatible model |
 | **:fontawesome-brands-linkedin:{ .linkedin } A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |
-| *(Optional)* An OpenAI-compatible local server (:simple-ollama: [Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on a local model: free and private |
+| *(Optional)* An OpenAI-compatible server (:simple-ollama: [Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on that model: free and private |
 
 ## The setup journey
 
@@ -37,7 +37,7 @@ pipenv install
 ### :simple-claude:{ .claude } Connect Claude Code
 
 Scout's browser scrape (Pass 1) always runs on Claude, and the enrichment
-passes do too unless you switch to a local backend. Sign up at claude.com to
+passes do too unless you switch to the api backend. Sign up at claude.com to
 get Claude Code access with all the models Scout uses (Haiku and Sonnet).
 
 !!! tip "You need a paid Claude plan"
@@ -95,7 +95,7 @@ dealbreaker_cap = 30.0           # max score when a dealbreaker is present
 dir = "logs"
 
 [llm]
-backend = "claude"              # or "local" — see the OpenAI-compatible Backend page
+backend = "claude"              # or "api" — see the OpenAI-compatible Backend page
 max_workers = 4                 # Pass 2/3 parallelism
 ```
 
@@ -108,9 +108,9 @@ max_workers = 4                 # Pass 2/3 parallelism
 | `[filters]` | ✅ | Companies to drop before any LLM call |
 | `[scoring]` | ✅ | Fit/criteria weights and the dealbreaker score cap |
 | `[logging]` | ✅ | Log directory (daily app log + opt-in model-call log) |
-| `[llm]` | ✅ | Backend (`claude` / `local`) and Pass 2/3 parallelism |
-| `[llm.local]` | when `backend = "local"` | Server URL, model, API key, timeout |
-| `[llm.local.clean]` / `[llm.local.enrich]` | optional | Per-pass request params merged into the local backend's chat-completion call |
+| `[llm]` | ✅ | Backend (`claude` / `api`) and Pass 2/3 parallelism |
+| `[llm.api]` | when `backend = "api"` | Server URL, model, API key, timeout |
+| `[llm.api.clean]` / `[llm.api.enrich]` | optional | Per-pass request params merged into the api backend's chat-completion call |
 | `[scrape]` | optional | Browser download folder (defaults to `~/Downloads`) |
 
 #### Pick the backend & its parallelism — `[llm]`
@@ -123,29 +123,29 @@ max_workers = 4
 
 | Field | Required | Notes |
 |---|---|---|
-| `backend` | ✅ | `"claude"` or `"local"` — no default, so the config always states which one is in use. Only Passes 2–3 move; Pass 1 (the browser scrape) always runs on Claude |
-| `max_workers` | ✅ | Width of the Pass 2/3 worker pool. Claude can go wide (bounded mainly by prompt-cache-write dedup, default 2); a local server is bounded by its own VRAM/throughput — a 16GB box running a 20B model may only manage `max_workers = 1` |
+| `backend` | ✅ | `"claude"` or `"api"` — no default, so the config always states which one is in use. Only Passes 2–3 move; Pass 1 (the browser scrape) always runs on Claude |
+| `max_workers` | ✅ | Width of the Pass 2/3 worker pool. Claude can go wide (bounded mainly by prompt-cache-write dedup, default 2); an api-backend server is bounded by its own VRAM/throughput — a 16GB box running a 20B model may only manage `max_workers = 1` |
 
-??? note ":material-server-network: Routing Passes 2–3 to a local server — `[llm.local]`"
+??? note ":material-server-network: Routing Passes 2–3 to an OpenAI-compatible endpoint — `[llm.api]`"
 
     !!! warning
-        Configuring a local LLM server is outside the scope of this manual.
+        Configuring an OpenAI-compatible server is outside the scope of this manual.
 
-    Set `backend = "local"` to route both headless passes to a **local
-    OpenAI-compatible server** such as [Ollama](https://ollama.com), cutting
-    API cost to zero for them. It's all-or-nothing: both passes move
-    together.
+    Set `backend = "api"` to route both headless passes to any
+    **OpenAI-compatible chat-completions endpoint** — local (e.g.
+    [Ollama](https://ollama.com)) or remote — cutting Claude API cost for
+    them. It's all-or-nothing: both passes move together.
 
     ```toml title="TOML"
     [llm]
-    backend = "local"
+    backend = "api"
     max_workers = 1                             # local box; keep it low
 
-    [llm.local]
+    [llm.api]
     base_url = "http://192.168.1.50:11434/v1"   # your server's OpenAI-compatible endpoint
     model    = "scout-enrich:latest"             # EXACT id from the server's model list
     # api_key = "ollama"    # optional; Ollama ignores it, other servers may need it
-    # timeout = 300         # optional, seconds (default 300) — local inference can be slow
+    # timeout = 300         # optional, seconds (default 300) — inference can be slow
     ```
 
     | Field | Required | Notes |
@@ -153,29 +153,29 @@ max_workers = 4
     | `base_url` | ✅ | Your server's OpenAI-compatible endpoint |
     | `model` | ✅ | Exact id from the server's model list — copy it verbatim, including any tag (Ollama: `name:tag`, e.g. `scout-enrich:latest`; `scout-enrich` alone won't match) |
     | `api_key` | optional | Ignored by Ollama; other servers may require it |
-    | `timeout` | optional | Seconds, default `300` — local inference can be slow |
+    | `timeout` | optional | Seconds, default `300` — inference can be slow |
 
     At startup the pipeline probes the server and refuses to run if it's
     unreachable or isn't serving that exact `model` id — a wrong host, a
     stopped server, or a mistyped/un-pulled model fails fast instead of
     mid-run, and the error prints the ids the server actually serves.
 
-??? note ":material-tune-variant: Per-pass request parameters (optional) — `[llm.local.clean]` / `[llm.local.enrich]`"
+??? note ":material-tune-variant: Per-pass request parameters (optional) — `[llm.api.clean]` / `[llm.api.enrich]`"
 
     Two optional sub-tables let you pass request parameters to the server
-    per pass — `[llm.local.clean]` for description cleaning (Pass 2) and
-    `[llm.local.enrich]` for enrichment/scoring (Pass 3). Each key/value is
+    per pass — `[llm.api.clean]` for description cleaning (Pass 2) and
+    `[llm.api.enrich]` for enrichment/scoring (Pass 3). Each key/value is
     merged **verbatim** into that pass's chat-completion JSON, so you can
     set anything the server accepts. The motivating case is a reasoning
     model like GPT-OSS: give the mechanical cleaning pass low effort and the
     scoring pass high effort.
 
     ```toml title="TOML"
-    [llm.local.clean]
+    [llm.api.clean]
     temperature = 0
     reasoning_effort = "low"      # cleaning is mechanical — don't burn thinking on it
 
-    [llm.local.enrich]
+    [llm.api.enrich]
     temperature = 0
     reasoning_effort = "high"     # scoring is judgment — let it think
     ```

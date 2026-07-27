@@ -132,7 +132,7 @@ context if it's needed. Match the tone/format of existing history
 Open a [GitHub issue](https://github.com/abraham-jacob/scout/issues). For
 bugs, include: what you expected, what happened instead, and enough
 reproduction context to act on (config shape, which backend — Claude or
-local LLM — you're running, relevant log lines). Personal data (resume
+API — you're running, relevant log lines). Personal data (resume
 content, actual job listings, API keys) never belongs in an issue — redact
 before pasting.
 
