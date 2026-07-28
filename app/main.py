@@ -79,9 +79,8 @@ def _init_run_state(url: str | None = None) -> None:
     the search groups synchronously from ``load_config().linkedin_searches``
     so the drawer shows every configured search immediately on click, rather
     than waiting for the subprocess's first stdout line. An ad-hoc ``--url``
-    run has no config-backed group to pre-create — its single group is
-    created on the fly by ``_apply_event``'s fallback once the runner emits
-    its first event.
+    run pre-creates a single group labeled "Ad-hoc URL" for the same reason,
+    since the runner's ``--url`` path never emits a name for its one search.
     """
     searches = [] if url else load_config().linkedin_searches
     _run.update({
@@ -97,10 +96,11 @@ def _init_run_state(url: str | None = None) -> None:
              "started_at": None, "elapsed": None}
             for k, l in GLOBAL_STEPS
         ],
-        "searches": [
-            _search_group(i, len(searches), s.name)
-            for i, s in enumerate(searches, 1)
-        ],
+        "searches": (
+            [_search_group(1, 1, "Ad-hoc URL")] if url
+            else [_search_group(i, len(searches), s.name)
+                  for i, s in enumerate(searches, 1)]
+        ),
         "log": [],
     })
     _run["global_steps"][0]["status"] = "active"
