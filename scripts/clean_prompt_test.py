@@ -34,18 +34,26 @@ from app.config import load_config  # noqa: E402
 from app.database import get_connection  # noqa: E402
 
 
-def _sample_jobs(n: int, seed: int) -> list[dict]:
+def _sample_jobs(n: int, seed: int, since_days: int | None = None) -> list[dict]:
     """Return up to n random jobs (job_id/title/company/description_raw) as dicts.
 
-    Fetches every job with a non-empty raw description, then takes a reproducible
-    random sample so the same seed yields the same set across runs (needed to
-    compare a prompt before and after a tweak on identical inputs).
+    Fetches every job with a non-empty raw description (optionally restricted
+    to jobs scraped within the last since_days days, for checking a prompt
+    change against only the newest scrapes rather than the whole history),
+    then takes a reproducible random sample so the same seed yields the same
+    set across runs (needed to compare a prompt before and after a tweak on
+    identical inputs).
     """
     conn = get_connection()
-    rows = conn.execute(
+    query = (
         "SELECT job_id, title, company, description_raw FROM jobs "
         "WHERE description_raw IS NOT NULL AND length(description_raw) > 0"
-    ).fetchall()
+    )
+    params = []
+    if since_days is not None:
+        query += " AND date_scraped >= ? - INTERVAL (?) DAY"
+        params = [conn.execute("SELECT MAX(date_scraped) FROM jobs").fetchone()[0], since_days]
+    rows = conn.execute(query, params).fetchall()
     conn.close()
 
     jobs = [
@@ -173,15 +181,19 @@ def main() -> None:
                         help="markdown report path (default ./clean_prompt_report.md)")
     parser.add_argument("--write-db", action="store_true",
                         help="persist successful cleanings into jobs.description_clean")
+    parser.add_argument("--since-days", type=int, default=None,
+                        help="restrict the sample to jobs scraped within this "
+                             "many days of the newest scrape in the DB (default: no filter)")
     args = parser.parse_args()
 
     config = load_config()
-    model = config.local_model if config.llm_backend == "local" else None
+    model = config.api_model if config.llm_backend == "api" else None
     print(f"Backend: {config.llm_backend}"
           + (f" (model {model})" if model else "") + f", sampling {args.n} jobs "
-          f"(seed {args.seed})...")
+          f"(seed {args.seed}"
+          + (f", last {args.since_days}d" if args.since_days is not None else "") + ")...")
 
-    jobs = _sample_jobs(args.n, args.seed)
+    jobs = _sample_jobs(args.n, args.seed, args.since_days)
     if not jobs:
         print("No jobs with description_raw found in the database.")
         return

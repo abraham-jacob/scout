@@ -729,6 +729,60 @@ class TestEnrichJobsWarmup:
         assert slept == [2]
 
 
+class TestCleanOne:
+    """Test clean_one's unit-split -> LLM drop-response -> stitch pipeline."""
+
+    def test_stitches_survivors_from_a_canned_drop_response(self, monkeypatch):
+        """A well-formed {"drop": [...]} response yields the stitched result."""
+        job = {
+            "job_id": "1",
+            "description_raw": "Keep this sentence.\n\nDrop this culture sentence.",
+        }
+        monkeypatch.setattr(
+            runner, "run_headless",
+            lambda pass_name, sys_prompt, user_msg: '{"drop":[{"r":"2","c":"culture"}]}')
+
+        result = runner.clean_one(job)
+
+        assert result == {"description_clean": "Keep this sentence."}
+
+    def test_empty_drop_list_keeps_everything(self, monkeypatch):
+        """{"drop": []} means nothing to remove — full text survives."""
+        job = {"job_id": "1", "description_raw": "Keep this whole sentence."}
+        monkeypatch.setattr(runner, "run_headless",
+                            lambda pass_name, sys_prompt, user_msg: '{"drop":[]}')
+
+        result = runner.clean_one(job)
+
+        assert result == {"description_clean": "Keep this whole sentence."}
+
+    def test_malformed_drop_response_falls_back_to_none(self, monkeypatch):
+        """A response with no usable 'drop' list makes clean_one return None."""
+        job = {"job_id": "1", "description_raw": "Some description text."}
+        monkeypatch.setattr(runner, "run_headless",
+                            lambda pass_name, sys_prompt, user_msg: "not json at all")
+
+        assert runner.clean_one(job) is None
+
+    def test_run_headless_failure_falls_back_to_none(self, monkeypatch):
+        """A None result from run_headless (backend failure) returns None."""
+        job = {"job_id": "1", "description_raw": "Some description text."}
+        monkeypatch.setattr(runner, "run_headless",
+                            lambda pass_name, sys_prompt, user_msg: None)
+
+        assert runner.clean_one(job) is None
+
+    def test_empty_description_returns_none_without_calling_llm(self, monkeypatch):
+        """No description_raw short-circuits before any LLM call."""
+        called = []
+        monkeypatch.setattr(
+            runner, "run_headless",
+            lambda pass_name, sys_prompt, user_msg: called.append(1))
+
+        assert runner.clean_one({"job_id": "1", "description_raw": ""}) is None
+        assert called == []
+
+
 class TestWarmUpCleanPass:
     """Test the realistically-sized model warm-up clean call."""
 

@@ -12,11 +12,14 @@ Pass 1 — Browser scrape (Haiku, system_prompt.md)
     mechanical. description_raw is stored as-is from the API.
 
 Pass 2 — Description cleaning (Haiku, parallel, clean_prompt.md)
-    One headless Haiku call per surviving job strips EEO boilerplate, benefits
-    copy, and generic company marketing from description_raw, producing
-    description_clean. Runs after the deterministic filters so we never clean
-    jobs we're going to drop anyway. Cheaper Haiku input tokens here save the
-    more expensive Sonnet input tokens in Pass 3.
+    description_raw is split in Python (agent/units.py) into numbered
+    sentence/bullet units; one headless Haiku call per surviving job is sent
+    only the numbered skeleton and names unit-ranges to drop (EEO, benefits,
+    culture, etc.) rather than rewriting anything, and the survivors are
+    stitched back into description_clean. The model can only mark text for
+    removal, never alter kept text. Runs after the deterministic filters so
+    we never clean jobs we're going to drop anyway. Cheaper Haiku input
+    tokens here save the more expensive Sonnet input tokens in Pass 3.
 
 Pass 3 — Per-job enrichment (Sonnet, parallel, enrichment_prompt.md)
     One headless Sonnet call per job classifies it into one of the configured
@@ -58,6 +61,12 @@ from app.config import load_config, load_roles
 from app.database import init_db
 from app.logging_setup import get_model_logger, setup_logging
 from agent.tools import create_scrape_run, save_jobs, get_existing_job_ids
+from agent.units import (
+    parse_drop_response,
+    render_units,
+    split_into_units,
+    stitch_units,
+)
 
 BASE_DIR = Path(__file__).parent.parent
 PROMPT_DIR = BASE_DIR / "agent"
@@ -665,25 +674,41 @@ def run_claude(system_prompt_file: Path, user_message: str) -> str:
 # ---------------------------------------------------------------------------
 
 def clean_one(job: dict) -> dict | None:
-    """Strip EEO boilerplate from one job's raw description.
+    """Strip boilerplate units from one job's raw description.
 
-    Fires a single headless call (clean_prompt.md) on the configured backend
-    (run_headless) that returns JSON with `description_clean` (boilerplate
-    stripped). Returns None on failure — the caller falls back gracefully so
-    enrichment always has something to work with.
+    Splits the raw text into numbered sentence/bullet units (agent.units),
+    sends the rendered numbered text to a single headless call
+    (clean_prompt.md) on the configured backend asking which unit ranges to
+    drop, and stitches the survivors back into description_clean. Returns
+    None on any failure — including a malformed drop response — so the
+    caller (clean_jobs / _warm_up_clean_pass) falls back to description_raw
+    exactly as before; every caller of this function (clean_jobs,
+    _warm_up_clean_pass, and the eval scripts under scripts/) depends on this
+    dict|None contract, so it must never change shape.
     """
     desc = job.get("description_raw") or ""
     if not desc:
         return None
 
-    result = run_headless("clean", CLEAN_PROMPT_FILE.read_text(), desc)
+    units = split_into_units(desc)
+    if not units:
+        return None
+
+    rendered = render_units(units)
+    result = run_headless("clean", CLEAN_PROMPT_FILE.read_text(), rendered)
     if result is None:
         print(f"  clean failed for {job.get('job_id')} — falling back to raw",
               file=sys.stderr)
         return None
 
     parsed = _extract_json(result)
-    clean = (parsed.get("description_clean") or "").strip()
+    drop = parse_drop_response(parsed, len(units))
+    if drop is None:
+        print(f"  clean returned an unparseable drop response for "
+              f"{job.get('job_id')} — falling back to raw", file=sys.stderr)
+        return None
+
+    clean = stitch_units(units, drop).strip()
     return {"description_clean": clean or None}
 
 
