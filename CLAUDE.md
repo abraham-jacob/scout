@@ -44,11 +44,16 @@ per-job enrichment/scoring (Pass 3) — launched as a subprocess by the web UI.
 Read `agent/runner.py`'s module docstring first — it is the map for the whole
 pipeline, and its Pass 1/2/3 numbering is authoritative.
 
-### Pass 1 — browser scrape (Haiku), `agent/system_prompt.md`
-`runner.py` spawns `claude --print --chrome` on Haiku with `system_prompt.md`. That
+### Pass 1 — browser scrape (Haiku), `agent/scrape_prompt.md` / `agent/scrape_single_prompt.md`
+`runner.py` spawns `claude --print --chrome` on Haiku with `scrape_prompt.md`. That
 sub-agent does **no filtering**: it hits LinkedIn's internal **Voyager job-postings
 API** via `javascript_tool` (not the accessibility tree, not card-clicking) to pull
 every field for every job on page 1, including virtualized cards that never render.
+A single LinkedIn job URL (a `/jobs/view/<id>` link, or a search URL's
+`currentJobId` toggled to "just this job" in the UI) is detected by
+`runner.extract_single_job_id()` and routed to `scrape_single_prompt.md`
+instead — the same Voyager fetch for one job ID directly, skipping the
+search-results DOM discovery entirely since the job ID is already known.
 
 The critical constraint: each job description is 5–13 KB, and the Chrome extension's
 **privacy filter blocks large `javascript_tool` return values**. So the sub-agent
@@ -194,7 +199,7 @@ and `pipenv run mkdocs serve`.
   likely than a real regression. Check in an incognito window or with a
   cache-busting fetch before debugging further.
 
-## LinkedIn scraping notes (in `system_prompt.md`)
+## LinkedIn scraping notes (in `scrape_prompt.md`)
 
 Two page structures exist and the Step-1 JS handles both: `/search-results/` uses the
 `componentkey` attribute; `/search/` (and `/comm/jobs/search` redirects) uses

@@ -24,7 +24,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from agent.runner import SetupError, check_setup
+from agent.runner import SetupError, check_setup, extract_single_job_id, resolve_scan_url
 from app.config import load_config, load_roles, role_color_map
 from app.database import JOB_STATUSES, get_connection, init_db
 from app.logging_setup import setup_logging
@@ -79,10 +79,12 @@ def _init_run_state(url: str | None = None) -> None:
     the search groups synchronously from ``load_config().linkedin_searches``
     so the drawer shows every configured search immediately on click, rather
     than waiting for the subprocess's first stdout line. An ad-hoc ``--url``
-    run pre-creates a single group labeled "Ad-hoc URL" for the same reason,
-    since the runner's ``--url`` path never emits a name for its one search.
+    run pre-creates a single group labeled "Ad-hoc URL" (or "Single job" for a
+    ``/jobs/view/<id>`` URL) for the same reason, since the runner's ``--url``
+    path never emits a name for its one search.
     """
     searches = [] if url else load_config().linkedin_searches
+    ad_hoc_label = "Single job" if url and extract_single_job_id(url) else "Ad-hoc URL"
     _run.update({
         "running": True,
         "error": None,
@@ -97,7 +99,7 @@ def _init_run_state(url: str | None = None) -> None:
             for k, l in GLOBAL_STEPS
         ],
         "searches": (
-            [_search_group(1, 1, "Ad-hoc URL")] if url
+            [_search_group(1, 1, ad_hoc_label)] if url
             else [_search_group(i, len(searches), s.name)
                   for i, s in enumerate(searches, 1)]
         ),
@@ -486,8 +488,12 @@ async def trigger_run(
     Runs the same setup checks the CLI runs (check_setup) synchronously first,
     so a broken config or an unreachable / wrong-model api backend
     surfaces in the drawer immediately — before any subprocess, browser, or
-    scrape work is started and wasted.
+    scrape work is started and wasted. ``url`` is expanded via
+    resolve_scan_url first so a bare job id pasted into the smart-paste bar
+    (rather than a full URL) is already a real URL by the time it's used for
+    labeling or handed to the runner subprocess.
     """
+    url = resolve_scan_url(url)
     with _run_lock:
         already_running = _run["running"]
     if already_running:

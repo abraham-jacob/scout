@@ -108,7 +108,7 @@
                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>
           </svg>
-          <input id="scan-url" type="url" inputmode="url" placeholder="Paste a LinkedIn job URL…" autocomplete="off"
+          <input id="scan-url" type="url" inputmode="url" placeholder="Paste a LinkedIn job URL or ID…" autocomplete="off"
                  oninput="onScanInput()"
                  onkeydown="if(event.key==='Enter'){event.preventDefault(); if(!document.getElementById('run-btn').disabled) document.getElementById('run-btn').click();}"
                  class="w-56 focus:w-72 transition-all pl-8 pr-8 py-2 text-sm bg-white dark:bg-card border border-stone-200 dark:border-edge rounded-xl dark:rounded-lg text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-400/40 dark:focus:ring-indigo-500/50 focus:border-orange-300 dark:focus:border-edgehi">
@@ -117,8 +117,8 @@
                   style="width:18px;height:18px;line-height:16px;font-size:12px">×</button>
         </div>
 
-        <!-- Run Scout / Scan search button: url is "" for the full config
-             run, or the classified URL for an ad-hoc single-search run -->
+        <!-- Run Scout / Scout this job URL|ID button: url is "" for the full
+             config run, or the classified URL/id for an ad-hoc run -->
         <button id="run-btn"
           hx-post="/scout/run"
           hx-target="#run-status"
@@ -255,13 +255,20 @@
     }
 
     // --- Scan-a-URL smart paste bar ---
-    // Classifies the pasted LinkedIn URL live: empty -> full config run; a
-    // search URL -> ad-hoc scan of just that search; a currentJobId-pinned
-    // search -> same, plus a preview of the (not-yet-built) "just this job"
-    // scan; a bare /jobs/view/<id> or a non-LinkedIn URL disables the button
-    // with an explanatory hint. window.scoutScanUrl holds the value actually
-    // sent to /scout/run's `url` field (empty string for the full run).
+    // Classifies the pasted LinkedIn URL (or bare job id) live: empty -> full
+    // config run; a search URL -> ad-hoc scan of just that search; a
+    // currentJobId-pinned search -> same, plus a toggle to scan just that one
+    // job instead; a bare /jobs/view/<id> URL, or just the numeric job id by
+    // itself (e.g. pasted from a Slack message), -> single-job scan;
+    // anything else (non-LinkedIn, or an unsupported LinkedIn path) disables
+    // the button with an explanatory hint. window.scoutScanUrl holds the
+    // value actually sent to /scout/run's `url` field (empty string for the
+    // full run) — for a bare job id this is the raw id, not a constructed
+    // URL; the backend (agent.runner.resolve_scan_url) expands it.
     window.scoutScanUrl = "";
+    // Only meaningful while the pasted URL classifies as 'search-pinned' —
+    // which half of the "All results" / "Just this job" toggle is selected.
+    window.scoutPinnedMode = "search";
 
     function scoutCleanUrl(u) {
       // Strips LinkedIn's tracking/session params so the field (and the
@@ -276,6 +283,7 @@
     function scoutClassifyUrl(raw) {
       const v = (raw || '').trim();
       if (!v) return { kind: 'empty' };
+      if (/^\d+$/.test(v)) return { kind: 'id', jobId: v };
       let u;
       try { u = new URL(v); } catch { return { kind: 'invalid' }; }
       if (!/(^|\.)linkedin\.com$/i.test(u.hostname)) return { kind: 'invalid' };
@@ -307,21 +315,37 @@
       document.getElementById('scan-sub-text').innerHTML = html;
     }
 
-    // "Just this job" is UI-only in v1 (disabled, SOON badge) — single-job
-    // scanning needs a scraper change (bypass the results-page DOM discovery
-    // and fetch one Voyager job directly) that isn't built yet.
+    // A job id called out in the subrow text. `highlighted` picks the
+    // accent color (matches the run button's gradient accent) vs. a faded
+    // neutral tone, so the reader's eye tracks which job is actually in play.
+    function scoutJobIdSpan(jobId, label, highlighted) {
+      const cls = highlighted
+        ? 'text-orange-600 dark:text-indigo-300 font-semibold'
+        : 'text-slate-400 dark:text-slate-500';
+      return '<span class="' + cls + '">' + label + jobId + '</span>';
+    }
+
+    // Toggle between scanning the whole search and just the currentJobId-
+    // pinned job. scoutSetPinnedMode flips window.scoutPinnedMode and
+    // re-runs onScanInput, which reads it back in the 'search-pinned' case.
     function scoutPinnedToggleHtml(jobId) {
+      const active   = 'px-2.5 py-0.5 rounded-md text-xs font-bold bg-white text-slate-900 shadow-sm dark:bg-indigo-500/20 dark:text-indigo-300 dark:ring-1 dark:ring-inset dark:ring-indigo-400/40';
+      const inactive = 'px-2.5 py-0.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200';
+      const mode = window.scoutPinnedMode;
       return '<span class="inline-flex items-center gap-2 flex-wrap">'
         + '<span class="text-slate-500 dark:text-slate-400">Scan:</span>'
         + '<span class="inline-flex rounded-lg bg-stone-100 dark:bg-card border border-stone-200 dark:border-edge p-0.5 gap-0.5">'
-        +   '<button type="button" class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-white text-slate-900 shadow-sm dark:bg-indigo-500/20 dark:text-indigo-300 dark:ring-1 dark:ring-inset dark:ring-indigo-400/40">All results</button>'
-        +   '<button type="button" disabled title="Coming soon" class="px-2.5 py-0.5 rounded-md text-xs font-medium text-slate-400 dark:text-slate-500 inline-flex items-center gap-1 cursor-not-allowed">'
-        +     'Just this job'
-        +     '<span class="text-[9px] uppercase tracking-wide font-bold px-1 py-px rounded bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">soon</span>'
-        +   '</button>'
+        +   '<button type="button" onclick="scoutSetPinnedMode(\'search\')" class="' + (mode === 'single' ? inactive : active) + '">All results</button>'
+        +   '<button type="button" onclick="scoutSetPinnedMode(\'single\')" class="' + (mode === 'single' ? active : inactive) + '">Just this job</button>'
         + '</span>'
-        + '<span class="text-slate-500 dark:text-slate-400">· highlights job #' + jobId + '</span>'
+        + '<span class="text-slate-500 dark:text-slate-400">·</span> '
+        + scoutJobIdSpan(jobId, 'JobId: ', mode === 'single')
         + '</span>';
+    }
+
+    function scoutSetPinnedMode(mode) {
+      window.scoutPinnedMode = mode;
+      onScanInput();
     }
 
     function onScanInput() {
@@ -330,6 +354,7 @@
       const raw = scanInput.value;
       document.getElementById('clear-scan-url').classList.toggle('invisible', raw.trim().length === 0);
       const c = scoutClassifyUrl(raw);
+      if (c.kind !== 'search-pinned') window.scoutPinnedMode = 'search';
       switch (c.kind) {
         case 'empty':
           window.scoutScanUrl = '';
@@ -340,20 +365,32 @@
         case 'search':
           window.scoutScanUrl = c.clean;
           runBtn.disabled = false;
-          runBtn.textContent = '🔎 Scan search';
-          scoutSetSubrow(true, SCAN_ICON.ok, '<b class="text-slate-800 dark:text-white">LinkedIn search</b> <span class="text-slate-500 dark:text-slate-400">— Scout will scan all results on page 1.</span>');
+          runBtn.textContent = '🔎 Scout this job URL';
+          scoutSetSubrow(true, SCAN_ICON.ok, '<b class="text-slate-800 dark:text-white">LinkedIn search</b> <span class="text-slate-500 dark:text-slate-400">— Scout will work on all results on page 1.</span>');
           break;
         case 'search-pinned':
-          window.scoutScanUrl = c.clean;
-          runBtn.disabled = false;
-          runBtn.textContent = '🔎 Scan search';
+          if (window.scoutPinnedMode === 'single') {
+            window.scoutScanUrl = 'https://www.linkedin.com/jobs/view/' + c.jobId + '/';
+            runBtn.disabled = false;
+            runBtn.textContent = '🎯 Scout this job URL';
+          } else {
+            window.scoutScanUrl = c.clean;
+            runBtn.disabled = false;
+            runBtn.textContent = '🔎 Scout this job URL';
+          }
           scoutSetSubrow(true, SCAN_ICON.info, scoutPinnedToggleHtml(c.jobId));
           break;
         case 'single':
-          window.scoutScanUrl = '';
-          runBtn.disabled = true;
-          runBtn.textContent = 'Single job — soon';
-          scoutSetSubrow(true, SCAN_ICON.soon, '<span class="text-amber-700 dark:text-amber-300"><b>Single-job scanning is coming soon.</b> Paste a search URL to scan the whole search (job #' + c.jobId + ').</span>');
+        case 'id':
+          // For 'id' (a bare job id, no URL at all) scoutScanUrl is just the
+          // raw id — resolve_scan_url on the backend expands it into the
+          // canonical job-view URL, so there's no URL-building to duplicate here.
+          window.scoutScanUrl = c.kind === 'id'
+            ? c.jobId
+            : 'https://www.linkedin.com/jobs/view/' + c.jobId + '/';
+          runBtn.disabled = false;
+          runBtn.textContent = c.kind === 'id' ? '🎯 Scout this job ID' : '🎯 Scout this job URL';
+          scoutSetSubrow(true, SCAN_ICON.ok, '<span class="text-slate-500 dark:text-slate-400">Scout will work on </span>' + scoutJobIdSpan(c.jobId, 'ID# ', true) + '<span class="text-slate-500 dark:text-slate-400">.</span>');
           break;
         case 'invalid':
         case 'unsupported':
