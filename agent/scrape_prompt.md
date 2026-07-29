@@ -82,6 +82,11 @@ await Promise.all(jobIds.map(async jobId => {
       `/voyager/api/jobs/jobPostings/${jobId}?decorationId=com.linkedin.voyager.deco.jobs.web.shared.WebFullJobPosting-65`,
       { headers: { 'csrf-token': csrfToken, 'x-restli-protocol-version': '2.0.0', 'accept': 'application/vnd.linkedin.normalized+json+2.1' }, credentials: 'include' }
     );
+    // fetch() does NOT throw on a 404 — LinkedIn returns HTTP 200-shaped JSON
+    // like {"data":{"status":404},"included":[]} for a bad/removed job id, with
+    // no title/company/description at all. Without this check that would
+    // silently become a job record full of nulls instead of an error entry.
+    if (!resp.ok) throw new Error(`not_found (${resp.status})`);
     const j = await resp.json();
     const d = j.data;
     const companyEntity = j.included?.find(e => e.$type === 'com.linkedin.voyager.entities.shared.MiniCompany' || e.$type?.endsWith('.Company'));
@@ -145,9 +150,12 @@ command, or read the descriptions back; triggering the blob download is all you
 need to do.
 
 **Fallback:**
-- If a specific job's Voyager fetch errored, retry it once; if it still fails,
-  leave that job's error entry in `window.__jobs` and move on. The runner skips
-  error entries. Do not read the page or click cards — the API is the sole data
+- A `not_found (404)` error means that job was removed between the search
+  results loading and your fetch — this is a permanent result, not a
+  transient failure, so do **not** retry it; leave the error entry and move on.
+- Any other Voyager fetch error, retry it once; if it still fails, leave that
+  job's error entry in `window.__jobs` and move on. The runner skips error
+  entries. Do not read the page or click cards — the API is the sole data
   source.
 - If the downloaded file never appears in `~/Downloads`, re-run the download
   snippet once. If it still doesn't appear, say so in your output.

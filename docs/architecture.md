@@ -46,7 +46,7 @@ pipeline — this page is the reader-facing version of the same design.
 ## :simple-claude:{ .claude } Pass 1 — browser scrape (Haiku)
 
 `runner.py` spawns `claude --print --chrome` on Haiku, driven by
-`agent/system_prompt.md`. This sub-agent does **no filtering** — it hits
+`agent/scrape_prompt.md`. This sub-agent does **no filtering** — it hits
 LinkedIn's internal **Voyager job-postings API** via `javascript_tool` (not
 the accessibility tree, not card-clicking) to pull every field for every job
 on page 1, including virtualized cards that LinkedIn never renders: title,

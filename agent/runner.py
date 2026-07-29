@@ -3,7 +3,7 @@ Scout agent runner.
 
 Three Claude passes, orchestrated here:
 
-Pass 1 — Browser scrape (Haiku, system_prompt.md)
+Pass 1 — Browser scrape (Haiku, scrape_prompt.md / scrape_single_prompt.md)
     A browser subprocess navigates LinkedIn and pulls EVERY job on page 1 into
     a Downloads/scout_<run_id>.json blob download via the Voyager API, which the
     runner reads directly from the Downloads folder. It does no filtering and no
@@ -70,7 +70,8 @@ from agent.units import (
 
 BASE_DIR = Path(__file__).parent.parent
 PROMPT_DIR = BASE_DIR / "agent"
-SYSTEM_PROMPT_FILE = PROMPT_DIR / "system_prompt.md"
+SCRAPE_PROMPT_FILE = PROMPT_DIR / "scrape_prompt.md"
+SCRAPE_SINGLE_PROMPT_FILE = PROMPT_DIR / "scrape_single_prompt.md"
 CLEAN_PROMPT_FILE  = PROMPT_DIR / "clean_prompt.md"
 ENRICH_PROMPT_FILE = PROMPT_DIR / "enrichment_prompt.md"
 
@@ -1323,13 +1324,67 @@ def apply_deterministic_filters(all_jobs: dict, existing_ids: set) -> list[dict]
     return survivors
 
 
-def run_scrape(url: str, scrape_run_id: str, index: int = 1) -> list[dict]:
+# Matches a bare LinkedIn job-view URL (https://www.linkedin.com/jobs/view/<id>/…)
+# so run_scrape/process_url/main() can route to the single-job Pass 1 variant
+# instead of the search-results scrape.
+JOB_VIEW_RE = re.compile(r"/jobs/view/(\d+)")
+BARE_JOB_ID_RE = re.compile(r"^\d+$")
+
+
+def extract_single_job_id(url: str) -> str | None:
+    """Return the job id if ``url`` is a LinkedIn job-view URL, else None.
+
+    Used to detect a single-job scan (as opposed to a search-results scrape)
+    from an ad-hoc ``--url``/UI-submitted URL — see scrape_single_prompt.md.
+    Expects ``url`` to already be a full URL; a bare job id should be passed
+    through resolve_scan_url first.
+    """
+    match = JOB_VIEW_RE.search(url)
+    return match.group(1) if match else None
+
+
+def resolve_scan_url(raw: str) -> str:
+    """Expand a bare LinkedIn job id into its canonical job-view URL.
+
+    Lets a user paste just the numeric id (e.g. copied out of a Slack
+    message) into the smart-paste bar instead of a full URL — the frontend
+    sends the raw digits straight through rather than duplicating this URL
+    construction in JS. Anything that isn't all-digits (a full URL, or an
+    empty string for the default config-driven run) passes through
+    unchanged. Called once, at the top of both entry points (the web route
+    and this module's CLI ``main()``), so every downstream consumer of
+    ``url`` — labeling, extract_single_job_id, run_scrape's navigation — only
+    ever sees a real URL.
+    """
+    raw = raw.strip()
+    return f"https://www.linkedin.com/jobs/view/{raw}/" if BARE_JOB_ID_RE.match(raw) else raw
+
+
+def run_scrape(url: str, scrape_run_id: str, index: int = 1,
+              job_id: str | None = None) -> list[dict]:
     """Scrape → deterministic filter → enrich → keep only configured role types.
 
     ``index`` is the 1-based position of this email in the run, used to route
-    progress events to the right per-email group in the UI drawer.
+    progress events to the right per-email group in the UI drawer. When
+    ``job_id`` is set, ``url`` is a single LinkedIn job-view URL and Pass 1
+    fetches just that one job (scrape_single_prompt.md) instead of scraping a
+    search-results page (scrape_prompt.md); everything downstream (filters,
+    clean, enrich) is unchanged since both variants write the same
+    ``{job_id: {...}}`` shape to the download file.
     """
-    user_message = f"""Run Scout for this LinkedIn job alert.
+    if job_id:
+        prompt_file = SCRAPE_SINGLE_PROMPT_FILE
+        user_message = f"""Scan this single LinkedIn job posting.
+
+LinkedIn URL: {url}
+Job ID: {job_id}
+Scrape run ID: {scrape_run_id}
+
+Follow the system prompt exactly. Fetch just this one job into the download file.
+"""
+    else:
+        prompt_file = SCRAPE_PROMPT_FILE
+        user_message = f"""Run Scout for this LinkedIn job alert.
 
 LinkedIn URL: {url}
 Scrape run ID: {scrape_run_id}
@@ -1339,7 +1394,7 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
 
     emit(scope="search", index=index, key="scrape", status="active")
     emit_log("Scraping LinkedIn…", level="head", index=index)
-    run_claude(SYSTEM_PROMPT_FILE, user_message)
+    run_claude(prompt_file, user_message)
 
     all_jobs = load_downloaded_jobs(scrape_run_id)
     scraped = len(all_jobs) if all_jobs else 0
@@ -1363,6 +1418,19 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
         emit(scope="search", index=index, key="filter", status="done", stat="0 of 0 kept")
         emit(scope="search", index=index, key="enrich", status="done", stat="0 kept")
         return []
+
+    if job_id:
+        job_entry = all_jobs.get(job_id)
+        if not job_entry or "error" in job_entry:
+            reason = job_entry.get("error") if job_entry else "no data returned"
+            msg = (f"Job {job_id} could not be scanned — it doesn't exist, has "
+                   f"been removed, or isn't accessible ({reason}). Nothing to save.")
+            print(f"WARNING: {msg}", file=sys.stderr)
+            logging.getLogger("scout").warning(msg)
+            emit(scope="search", index=index, key="filter", status="done", stat="invalid job")
+            emit(scope="search", index=index, key="enrich", status="done", stat="0 kept")
+            emit_log(msg, level="warn", index=index)
+            return []
 
     # Deterministic pre-filters — cheap, and done BEFORE enrichment so we never
     # spend a Sonnet call on a job we're going to drop anyway.
@@ -1410,14 +1478,20 @@ def process_url(
     search_name: str = "Manual run",
     index: int = 1,
     total: int = 1,
+    job_id: str | None = None,
 ) -> bool:
     """Create a scrape run, scrape + enrich + filter, and save results.
 
     ``index``/``total`` position this search within the run for UI progress.
+    ``job_id`` routes the scrape to the single-job Pass 1 variant (see
+    run_scrape); when set and ``search_name`` was left at its default, the
+    scrape run is labeled "Single job scan" instead of "Manual run".
     Returns True if the search was fully processed (even if 0 jobs were
     saved), False if the run was aborted (e.g. the scrape timed out).
     """
     print(f"\nURL  : {url[:80]}...")
+    if job_id and search_name == "Manual run":
+        search_name = "Single job scan"
 
     run_id = create_scrape_run(
         search_name=search_name,
@@ -1427,7 +1501,7 @@ def process_url(
     print(f"Run  : {run_id}")
 
     try:
-        jobs = run_scrape(url, run_id, index)
+        jobs = run_scrape(url, run_id, index, job_id=job_id)
     except TimeoutError as exc:
         emit(scope="search", index=index, key="scrape", status="error", stat="timed out")
         print(f"\nERROR: {exc}. Run aborted — nothing saved.", file=sys.stderr)
@@ -1503,7 +1577,9 @@ def main() -> None:
     emit(scope="global", key="start", status="done")
 
     if args.url:
-        process_url(url=args.url, index=1, total=1)
+        url = resolve_scan_url(args.url)
+        job_id = extract_single_job_id(url)
+        process_url(url=url, index=1, total=1, job_id=job_id)
         log.info("Run finished (1 URL)")
         emit(scope="run", status="done")
         return

@@ -426,6 +426,184 @@ class TestRunScrapeNoFile:
         assert "download_dir" in err  # points at the config override too
 
 
+class TestExtractSingleJobId:
+    """Test detection of a single-job /jobs/view/<id> URL."""
+
+    def test_matches_job_view_url(self):
+        """A plain job-view URL yields its numeric id."""
+        assert runner.extract_single_job_id(
+            "https://www.linkedin.com/jobs/view/4407398880/") == "4407398880"
+
+    def test_matches_job_view_url_with_query_string(self):
+        """Tracking params after the id don't break the match."""
+        url = "https://www.linkedin.com/jobs/view/4407398880/?trk=abc&refId=xyz"
+        assert runner.extract_single_job_id(url) == "4407398880"
+
+    def test_search_url_returns_none(self):
+        """A search-results URL (no /jobs/view/) is not a single-job URL."""
+        url = "https://www.linkedin.com/jobs/search-results/?currentJobId=4407398880"
+        assert runner.extract_single_job_id(url) is None
+
+    def test_non_linkedin_url_returns_none(self):
+        """A URL that merely contains the substring elsewhere is not matched."""
+        assert runner.extract_single_job_id("https://example.com/other") is None
+
+
+class TestResolveScanUrl:
+    """Test expansion of a bare job id into its canonical job-view URL."""
+
+    def test_bare_job_id_is_expanded(self):
+        """Plain digits become a full job-view URL."""
+        assert (runner.resolve_scan_url("4440072975")
+                == "https://www.linkedin.com/jobs/view/4440072975/")
+
+    def test_bare_job_id_with_surrounding_whitespace_is_trimmed_then_expanded(self):
+        """Whitespace from a copy-paste doesn't block detection."""
+        assert (runner.resolve_scan_url("  4440072975  ")
+                == "https://www.linkedin.com/jobs/view/4440072975/")
+
+    def test_full_url_passes_through_unchanged(self):
+        """An already-full URL is not touched."""
+        url = "https://www.linkedin.com/jobs/view/4440072975/"
+        assert runner.resolve_scan_url(url) == url
+
+    def test_search_url_passes_through_unchanged(self):
+        """A search URL (not all-digits) is not mistaken for a bare job id."""
+        url = "https://www.linkedin.com/jobs/search/"
+        assert runner.resolve_scan_url(url) == url
+
+    def test_empty_string_passes_through_unchanged(self):
+        """The default config-driven run (empty url) is untouched."""
+        assert runner.resolve_scan_url("") == ""
+
+    def test_expanded_url_is_then_detected_by_extract_single_job_id(self):
+        """resolve_scan_url's output feeds extract_single_job_id correctly (integration)."""
+        expanded = runner.resolve_scan_url("4440072975")
+        assert runner.extract_single_job_id(expanded) == "4440072975"
+
+
+class TestRunScrapeSingleJob:
+    """Test run_scrape's routing to the single-job Pass 1 prompt."""
+
+    def test_job_id_routes_to_single_prompt(self, monkeypatch):
+        """job_id set -> scrape_single_prompt.md with a job-id-bearing message."""
+        calls = {}
+
+        def fake_run_claude(prompt_file, user_message):
+            calls["prompt_file"] = prompt_file
+            calls["user_message"] = user_message
+            return ""
+
+        monkeypatch.setattr(runner, "run_claude", fake_run_claude)
+        monkeypatch.setattr(runner, "load_downloaded_jobs", lambda run_id: None)
+        monkeypatch.setattr(runner, "download_dir", lambda: Path("/home/x/Downloads"))
+
+        runner.run_scrape("https://www.linkedin.com/jobs/view/999/", "run1",
+                          index=1, job_id="999")
+
+        assert calls["prompt_file"] == runner.SCRAPE_SINGLE_PROMPT_FILE
+        assert "999" in calls["user_message"]
+
+    def test_no_job_id_still_uses_search_prompt(self, monkeypatch):
+        """Regression guard: the default (search) path is unchanged."""
+        calls = {}
+
+        def fake_run_claude(prompt_file, user_message):
+            calls["prompt_file"] = prompt_file
+            return ""
+
+        monkeypatch.setattr(runner, "run_claude", fake_run_claude)
+        monkeypatch.setattr(runner, "load_downloaded_jobs", lambda run_id: None)
+        monkeypatch.setattr(runner, "download_dir", lambda: Path("/home/x/Downloads"))
+
+        runner.run_scrape("https://www.linkedin.com/jobs/search/", "run1", index=1)
+
+        assert calls["prompt_file"] == runner.SCRAPE_PROMPT_FILE
+
+    def test_invalid_job_id_is_reported_and_returns_no_jobs(self, capsys, monkeypatch):
+        """An error entry for the requested job_id short-circuits with a clear message."""
+        monkeypatch.setattr(runner, "run_claude", lambda *a, **k: "")
+        monkeypatch.setattr(
+            runner, "load_downloaded_jobs",
+            lambda run_id: {"999": {"error": "Error: not_found (404)"}})
+
+        result = runner.run_scrape("https://www.linkedin.com/jobs/view/999/",
+                                   "run1", index=1, job_id="999")
+
+        assert result == []
+        err = capsys.readouterr().err
+        assert "999" in err
+        assert "doesn't exist" in err
+
+    def test_missing_job_id_entry_is_also_reported(self, capsys, monkeypatch):
+        """The job_id being entirely absent from the download is treated the same as an error."""
+        monkeypatch.setattr(runner, "run_claude", lambda *a, **k: "")
+        monkeypatch.setattr(runner, "load_downloaded_jobs", lambda run_id: {})
+
+        result = runner.run_scrape("https://www.linkedin.com/jobs/view/999/",
+                                   "run1", index=1, job_id="999")
+
+        assert result == []
+        err = capsys.readouterr().err
+        assert "no data returned" in err
+
+    def test_valid_job_id_proceeds_past_the_check(self, monkeypatch):
+        """A real job entry for job_id doesn't trip the invalid-job early exit."""
+        monkeypatch.setattr(runner, "run_claude", lambda *a, **k: "")
+        monkeypatch.setattr(
+            runner, "load_downloaded_jobs",
+            lambda run_id: {"999": {"title": "Engineer", "company": "Acme",
+                                     "jobState": "LISTED"}})
+        monkeypatch.setattr(runner, "get_existing_job_ids", lambda: [])
+        monkeypatch.setattr(runner, "clean_jobs", lambda jobs, index=1: None)
+        monkeypatch.setattr(runner, "enrich_jobs", lambda jobs, index=1: None)
+        monkeypatch.setattr(runner, "load_roles",
+                            lambda: [types.SimpleNamespace(name="IC")])
+
+        result = runner.run_scrape("https://www.linkedin.com/jobs/view/999/",
+                                   "run1", index=1, job_id="999")
+
+        # role_type was never set by the (stubbed) enrich step, so it's filtered
+        # out downstream — the point of this test is just that we got past the
+        # invalid-job-id check rather than short-circuiting on a valid entry.
+        assert result == []
+
+
+class TestProcessUrlSingleJob:
+    """Test process_url's job_id passthrough to run_scrape and search_name default."""
+
+    def test_job_id_forwarded_and_default_name_set(self, monkeypatch):
+        """job_id reaches run_scrape and the default label becomes 'Single job scan'."""
+        monkeypatch.setattr(runner, "create_scrape_run", lambda **kw: "run1")
+        run_scrape_calls = {}
+
+        def fake_run_scrape(url, run_id, index, job_id=None):
+            run_scrape_calls["job_id"] = job_id
+            return []
+
+        monkeypatch.setattr(runner, "run_scrape", fake_run_scrape)
+        monkeypatch.setattr(runner, "save_jobs", lambda *a, **k: {"saved": 0, "reposts_detected": 0})
+
+        runner.process_url(url="https://www.linkedin.com/jobs/view/999/",
+                           index=1, total=1, job_id="999")
+
+        assert run_scrape_calls["job_id"] == "999"
+
+    def test_explicit_search_name_is_not_overridden(self, monkeypatch):
+        """An explicitly-passed search_name wins even when job_id is set."""
+        names = {}
+        monkeypatch.setattr(
+            runner, "create_scrape_run",
+            lambda **kw: names.setdefault("name", kw["search_name"]) or "run1")
+        monkeypatch.setattr(runner, "run_scrape", lambda *a, **k: [])
+        monkeypatch.setattr(runner, "save_jobs", lambda *a, **k: {"saved": 0, "reposts_detected": 0})
+
+        runner.process_url(url="https://www.linkedin.com/jobs/view/999/",
+                           search_name="Custom label", index=1, total=1, job_id="999")
+
+        assert names["name"] == "Custom label"
+
+
 class TestTokenTracking:
     """Test token and cost tracking."""
 
@@ -1041,3 +1219,43 @@ class TestMainSearchLoop:
         assert len(calls) == 1
         assert calls[0]["index"] == 1
         assert calls[0]["total"] == 1
+
+    def _run_main_with_url(self, monkeypatch, url):
+        """Run main() with --url, stubbing setup/IO and recording process_url's call."""
+        import sys
+        monkeypatch.setattr(sys, "argv", ["runner", "--url", url])
+        monkeypatch.setattr(runner, "validate_setup", lambda: None)
+        monkeypatch.setattr(runner, "setup_logging",
+                            lambda: __import__("logging").getLogger("scout"))
+        monkeypatch.setattr(runner, "init_db", lambda: None)
+        monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
+        calls = []
+        monkeypatch.setattr(runner, "process_url",
+                            lambda **kw: calls.append(kw) or True)
+        runner.main()
+        return calls
+
+    def test_job_view_url_routes_with_job_id(self, monkeypatch):
+        """--url pointing at /jobs/view/<id> passes that id through as job_id."""
+        calls = self._run_main_with_url(
+            monkeypatch, "https://www.linkedin.com/jobs/view/999/")
+
+        assert len(calls) == 1
+        assert calls[0]["url"] == "https://www.linkedin.com/jobs/view/999/"
+        assert calls[0]["job_id"] == "999"
+
+    def test_search_url_routes_with_no_job_id(self, monkeypatch):
+        """--url pointing at a search page passes job_id=None (regression guard)."""
+        calls = self._run_main_with_url(
+            monkeypatch, "https://www.linkedin.com/jobs/search/")
+
+        assert len(calls) == 1
+        assert calls[0]["job_id"] is None
+
+    def test_bare_job_id_url_is_expanded_and_routed(self, monkeypatch):
+        """--url of just a numeric job id is expanded to a job-view URL and routed."""
+        calls = self._run_main_with_url(monkeypatch, "4440072975")
+
+        assert len(calls) == 1
+        assert calls[0]["url"] == "https://www.linkedin.com/jobs/view/4440072975/"
+        assert calls[0]["job_id"] == "4440072975"

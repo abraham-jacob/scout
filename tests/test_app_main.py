@@ -339,6 +339,27 @@ class TestScoutRunRoute:
         mock_start.assert_called_once()
         assert mock_start.call_args[0] == (None, False)
 
+    @patch('app.main.check_setup')
+    @patch('app.main._start_run_background')
+    def test_trigger_run_expands_bare_job_id(self, mock_start, mock_check_setup, client, reset_run_state):
+        """A bare numeric job id is expanded to a job-view URL before reaching the runner."""
+        response = client.post("/scout/run", data={"url": "4440072975"})
+
+        assert response.status_code == 200
+        mock_start.assert_called_once()
+        call_args = mock_start.call_args[0]
+        assert call_args[0] == "https://www.linkedin.com/jobs/view/4440072975/"
+
+    @patch('app.main.check_setup')
+    @patch('app.main._start_run_background')
+    def test_trigger_run_bare_job_id_labels_drawer_single_job(
+            self, mock_start, mock_check_setup, client, reset_run_state):
+        """A bare job id gets the "Single job" drawer label, not "Ad-hoc URL"."""
+        response = client.post("/scout/run", data={"url": "4440072975"})
+
+        assert response.status_code == 200
+        assert "Single job" in response.text
+
     @patch('app.main._start_run_background')
     def test_trigger_run_already_running(self, mock_start, client, reset_run_state):
         """POST /scout/run returns status if run already in progress."""
