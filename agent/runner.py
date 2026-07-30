@@ -44,22 +44,20 @@ import argparse
 import functools
 import json
 import logging
-import os
 import re
-import shutil
-import signal
-import subprocess
 import sys
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import httpx
-
 from app.config import load_config, load_roles
 from app.database import init_db
-from app.logging_setup import get_model_logger, setup_logging
+from app.logging_setup import setup_logging
+import agent.llm_common as llm_common
+from agent.claude import CLEAN_MODEL, ENRICH_MODEL, SCRAPER_MODEL, claude_executable, run_claude
+from agent.llm import run_headless
+from agent.llm_api import _verify_api_llm, _warm_api_llm
+from agent.llm_common import SetupError, emit, emit_log, print_token_summary
 from agent.step_keys import StepKey
 from agent.tools import create_scrape_run, save_jobs, get_existing_job_ids
 from agent.units import (
@@ -84,29 +82,11 @@ PROFILES_DIR = BASE_DIR / "profiles"
 RESUME_FILE = PROFILES_DIR / "resume.md"
 CRITERIA_FILE = PROFILES_DIR / "criteria.md"
 
-# Pass 1 (browser scrape) and Pass 2 (description cleaning) both run on Haiku —
-# cheap and mechanical. Pass 3 (enrichment/scoring) runs on Sonnet — the
-# classification, summarization, and fit judgment are the quality-sensitive steps.
-SCRAPER_MODEL = "claude-haiku-4-5-20251001"
-CLEAN_MODEL   = "claude-haiku-4-5-20251001"
-ENRICH_MODEL  = "claude-sonnet-4-6"
-
 # The Pass 2/Pass 3 worker-pool width is configurable per backend via
 # [llm] max_workers (config.max_workers). It's a knob because the right value
 # depends on the active backend: a Claude run trades wall-clock against
 # duplicate prompt-cache writes of the shared system prompt, while an api-backend
 # server is bounded by its own VRAM/throughput (a 16GB box may only manage 1).
-
-# The clean/enrich calls are structured extraction against an explicit rubric;
-# extended thinking adds ~1.5K billed-but-invisible output tokens per call
-# without improving them, so it is disabled for those subprocesses. The browser
-# scrape keeps thinking — it is an agentic multi-step task.
-_NO_THINKING_ENV = {**os.environ, "MAX_THINKING_TOKENS": "0"}
-
-# Hard wall-clock cap on each claude subprocess (the browser scrape and each
-# enrichment call). Past this we kill the subprocess so a runaway or stuck agent
-# can't hang the run indefinitely.
-SUBPROCESS_TIMEOUT_S = 240  # 4 minutes
 
 # Where the agent hands off the downloaded job batch: the browser saves it to
 # the Downloads folder and the runner reads it straight from there — no shell,
@@ -131,65 +111,6 @@ def download_dir() -> Path:
     """
     return Path(load_config().download_dir).expanduser()
 
-# ---------------------------------------------------------------------------
-# Progress events
-# ---------------------------------------------------------------------------
-
-# The web UI runs this module as a subprocess and folds these events into its
-# in-memory run state to drive the run drawer. Each event is one line on stdout,
-# sentinel-prefixed so the parent can pick them out from ordinary log output.
-PROGRESS_SENTINEL = "SCOUT_PROGRESS "
-
-
-def emit(**event) -> None:
-    """Emit one structured progress event for the web UI to parse.
-
-    Written as a single sentinel-prefixed JSON line and flushed immediately so
-    the parent process sees stage transitions live rather than at run end.
-    """
-    print(PROGRESS_SENTINEL + json.dumps(event), flush=True)
-
-
-def emit_log(msg: str, level: str = "info", index: int | None = None) -> None:
-    """Emit one line for the run drawer's scrolling event-log pane.
-
-    ``level`` drives the log line's color in the UI ("info", "good", "drop",
-    "head"); ``index`` optionally ties the line to a specific search group.
-    The web UI timestamps each line on receipt (see app/main.py::_apply_event)
-    rather than trusting a value from this subprocess, so no timestamp is sent.
-    """
-    emit(scope="log", msg=msg, level=level, index=index)
-
-
-# ---------------------------------------------------------------------------
-# Cross-platform subprocess helpers
-# ---------------------------------------------------------------------------
-
-# Give each claude subprocess its own process group so the watchdog can kill the
-# whole tree (the browser agent spawns children). POSIX uses a new session;
-# Windows uses CREATE_NEW_PROCESS_GROUP — the nearest equivalent.
-if os.name == "nt":
-    _NEW_GROUP_KWARGS = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-else:
-    _NEW_GROUP_KWARGS = {"start_new_session": True}
-
-
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    """Hard-kill a subprocess and every child it spawned, cross-platform.
-
-    POSIX SIGKILLs the process group; Windows has no group-signal equivalent,
-    so ``taskkill /T`` walks and kills the tree. Best-effort — losing a race
-    with a process that already exited is fine.
-    """
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                       capture_output=True)
-    else:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-
 
 @functools.lru_cache(maxsize=None)
 def _load_clean_prompt() -> str:
@@ -201,97 +122,6 @@ def _load_clean_prompt() -> str:
     and the rest just get the cached string back.
     """
     return CLEAN_PROMPT_FILE.read_text()
-
-
-@functools.lru_cache(maxsize=None)
-def claude_executable() -> str:
-    """Absolute path to the ``claude`` CLI, resolved once via PATH.
-
-    Windows installs the CLI as a .cmd shim that ``subprocess`` can't find by
-    bare name; ``shutil.which`` honors PATHEXT and returns the real path, which
-    we hand to subprocess directly. Raises FileNotFoundError if it isn't
-    installed / on PATH (validate_setup surfaces this as a clean startup error).
-    """
-    resolved = shutil.which("claude")
-    if resolved is None:
-        raise FileNotFoundError(
-            "'claude' CLI not found on PATH. Install Claude Code and make sure "
-            "the `claude` command is on your PATH, then re-run."
-        )
-    return resolved
-
-
-# ---------------------------------------------------------------------------
-# Model-interaction logging (opt-in via --log-model-calls)
-# ---------------------------------------------------------------------------
-
-_log_model_calls = False
-
-
-def log_model_call(call_type: str, model: str, system_prompt: str,
-                   user_message: str) -> None:
-    """Append one Claude-call record to the model-interaction log, if enabled.
-
-    Human-readable blocks (not JSON — escaped newlines would make the
-    multi-KB markdown prompts unreadable): a header line with timestamp,
-    pass name, and model, then the full system prompt and user message
-    verbatim under labeled rules. A no-op unless the run was started with
-    --log-model-calls.
-    """
-    if not _log_model_calls:
-        return
-    ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    get_model_logger().info(
-        "=" * 78 + "\n"
-        f"{ts} | {call_type} | {model}\n"
-        + "-" * 30 + " system prompt " + "-" * 33 + "\n"
-        f"{system_prompt}\n"
-        + "-" * 30 + " user message " + "-" * 34 + "\n"
-        f"{user_message}\n"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Token tracking
-# ---------------------------------------------------------------------------
-
-_tokens: dict = {
-    "input": 0,
-    "output": 0,
-    "cache_read": 0,
-    "cache_write": 0,
-    "cost_usd": 0.0,
-    "calls": 0,
-}
-_tokens_lock = threading.Lock()
-
-
-def _add_usage(usage: dict, cost_usd: float) -> None:
-    """Accumulate token counts from a claude subprocess result (thread-safe)."""
-    with _tokens_lock:
-        _tokens["input"] += usage.get("input_tokens", 0)
-        _tokens["output"] += usage.get("output_tokens", 0)
-        _tokens["cache_read"] += usage.get("cache_read_input_tokens", 0)
-        _tokens["cache_write"] += usage.get("cache_creation_input_tokens", 0)
-        _tokens["cost_usd"] += cost_usd
-        _tokens["calls"] += 1
-
-
-def print_token_summary() -> None:
-    """Print accumulated token/cost totals."""
-    t = _tokens
-    total_input = t["input"] + t["cache_read"] + t["cache_write"]
-    print("\n" + "=" * 55)
-    print("  TOKEN USAGE SUMMARY")
-    print("=" * 55)
-    print(f"  API calls          : {t['calls']}")
-    print(f"  Input tokens       : {t['input']:,}  (fresh)")
-    print(f"  Cache read tokens  : {t['cache_read']:,}")
-    print(f"  Cache write tokens : {t['cache_write']:,}")
-    print(f"  Output tokens      : {t['output']:,}")
-    print(f"  Total input equiv  : {total_input:,}")
-    print(f"  Estimated cost     : ${t['cost_usd']:.4f}")
-    print("=" * 55)
 
 
 # ---------------------------------------------------------------------------
@@ -361,338 +191,6 @@ def _extract_json(text: str) -> dict:
             except json.JSONDecodeError:
                 pass
     return {}
-
-
-# ---------------------------------------------------------------------------
-# Headless-pass backend dispatch (Pass 2 clean + Pass 3 enrich)
-# ---------------------------------------------------------------------------
-
-# Which Claude model each headless pass uses when backend == "claude". On the
-# api backend both passes use the single configured [llm.api] model.
-_PASS_CLAUDE_MODEL = {"clean": CLEAN_MODEL, "enrich": ENRICH_MODEL}
-
-
-def run_headless(pass_name: str, system_prompt: str, user_message: str) -> str | None:
-    """Run one headless structured call for Pass 2/3 on the configured backend.
-
-    Dispatches to Claude (a `claude --print` subprocess) or an OpenAI-compatible
-    endpoint (e.g. Ollama, local or remote) according to [llm] backend in the
-    config. pass_name is "clean" or "enrich". Handles model-call logging and
-    token/cost accounting internally and returns the raw model result text (the
-    JSON blob the caller parses with _extract_json), or None on any failure so
-    the caller can fall back gracefully. Pass 1 (the browser scrape) does not go
-    through here — it always runs on Claude via run_claude.
-    """
-    config = load_config()
-    if config.llm_backend == "api":
-        model = config.api_model
-        log_model_call(pass_name, model, system_prompt, user_message)
-        return _run_api_llm(config, pass_name, model, system_prompt,
-                            user_message)
-    model = _PASS_CLAUDE_MODEL[pass_name]
-    log_model_call(pass_name, model, system_prompt, user_message)
-    return _run_claude_headless(model, system_prompt, user_message)
-
-
-def _run_claude_headless(model: str, system_prompt: str,
-                         user_message: str) -> str | None:
-    """Run one headless `claude --print --output-format json` call.
-
-    The shared subprocess path for the clean and enrich passes: extended
-    thinking off, dynamic system-prompt sections excluded, hard-capped at
-    SUBPROCESS_TIMEOUT_S. Accumulates usage/cost into _tokens and returns the
-    envelope's `result` text, or None on timeout / subprocess / parse failure.
-    """
-    cmd = [
-        claude_executable(),
-        "--print",
-        "--model", model,
-        "--exclude-dynamic-system-prompt-sections",
-        "--system-prompt", system_prompt,
-        "--output-format", "json",
-        user_message,
-    ]
-    try:
-        proc = subprocess.run(
-            cmd, cwd=str(BASE_DIR), capture_output=True, text=True,
-            timeout=SUBPROCESS_TIMEOUT_S, env=_NO_THINKING_ENV,
-        )
-        envelope = json.loads(proc.stdout)
-    except subprocess.TimeoutExpired:
-        print(f"  claude {model} call timed out (> {SUBPROCESS_TIMEOUT_S}s)",
-              file=sys.stderr)
-        return None
-    except (subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
-        print(f"  claude {model} call failed: {exc}", file=sys.stderr)
-        return None
-
-    _add_usage(
-        envelope.get("usage", {}),
-        envelope.get("total_cost_usd", envelope.get("cost_usd", 0.0)),
-    )
-    return envelope.get("result", "")
-
-
-# A non-streaming request gives Ollama nothing to write until generation is
-# fully done, so a client-side timeout goes completely unnoticed server-side
-# — the server keeps computing a response nobody will read, and the next
-# request queues up behind it, cascading timeouts across the whole batch
-# (observed in practice). Streaming means the server is writing bytes
-# continuously, so a dead client is noticed on its next write instead of
-# after the full (possibly abandoned) generation completes. It has a second
-# benefit: httpx's read timeout applies per-chunk on a streamed response, not
-# once for the whole reply, so a slow-but-progressing generation no longer
-# trips a false-positive timeout the way one all-or-nothing deadline did —
-# only a genuine stall (no new chunk within config.api_timeout) does.
-# API_STREAM_RETRIES/API_STREAM_RETRY_DELAY_S retry a stalled/dropped
-# stream a few times, pausing between attempts so an already-abandoned
-# generation has a chance to actually finish draining server-side before the
-# next attempt piles on top of it.
-API_STREAM_RETRIES = 3
-API_STREAM_RETRY_DELAY_S = 10
-
-
-def _api_endpoint(config, path: str) -> tuple[str, dict]:
-    """Build the request URL and auth headers for one OpenAI-compatible API call.
-
-    ``path`` is appended to config.api_base_url (e.g. "/chat/completions",
-    "/models"); an Authorization header is added only when [llm.api] api_key
-    is set, matching how every OpenAI-compatible server (including
-    unauthenticated local ones like Ollama) expects it.
-    """
-    url = config.api_base_url.rstrip("/") + path
-    headers = {}
-    if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
-    return url, headers
-
-
-def _run_api_llm(config, pass_name: str, model: str, system_prompt: str,
-                 user_message: str) -> str | None:
-    """POST one streamed chat-completion to the configured OpenAI-compatible endpoint.
-
-    Talks to config.api_base_url (e.g. an Ollama server's /v1 endpoint),
-    asking for JSON output. Temperature is NOT forced — the server/model default
-    applies unless the per-pass param table sets one. That optional table
-    ([llm.api.<pass_name>], e.g. temperature or GPT-OSS's reasoning_effort) is
-    merged over the JSON-mode baseline — so a user can raise the effort for enrich
-    and drop it for clean — but the model/messages/stream/stream_options fields
-    the pipeline owns are re-asserted afterward so a stray config key can't
-    clobber them.
-
-    Streams the response (see API_STREAM_RETRIES above for why) and
-    reassembles the answer from each chunk's delta.content. Reasoning/thinking
-    tokens (confirmed via a live test against Ollama) arrive as a separate
-    delta.reasoning field and are never mixed into delta.content, so they're
-    simply skipped rather than needing to be stripped out of the final text.
-    stream_options.include_usage=true (also confirmed supported) makes the
-    server send one final chunk with empty choices and a populated usage
-    field just before [DONE]; that's mapped into the token tracker at zero
-    cost (this backend isn't metered by the pipeline).
-
-    Retries up to API_STREAM_RETRIES times, API_STREAM_RETRY_DELAY_S apart,
-    on a connection error or a stream stall — this composes with
-    _retry_failures' own single batch-level retry pass, so a call can
-    exhaust its retries here and still get one more shot there. Returns the
-    assistant message text, or None if every attempt fails so the caller
-    falls back gracefully. _extract_json still tolerates stray prose if the
-    server ignores the JSON-mode request.
-
-    Every failure (connection error, stream stall, or a stream that ends
-    with reasoning chunks but no content — the model reasoning itself out of
-    budget without ever producing an answer) is also emit_log'd, not just
-    printed to stderr — this subprocess's stderr is piped into an in-memory
-    buffer by app/main.py and only ever surfaced (truncated) if the whole
-    run fails, so a per-job failure that falls back gracefully would
-    otherwise be invisible anywhere the user can see it. The event log's
-    "log" scope isn't tied to a specific search's group (see emit_log), so
-    no index needs threading through here.
-    """
-    url, headers = _api_endpoint(config, "/chat/completions")
-    pass_params = (config.api_clean_params if pass_name == "clean"
-                   else config.api_enrich_params)
-    payload = {
-        "response_format": {"type": "json_object"},
-        **pass_params,
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        "stream": True,
-        "stream_options": {"include_usage": True},
-    }
-
-    for attempt in range(1, API_STREAM_RETRIES + 1):
-        attempt_t0 = time.monotonic()
-        reasoning_chunks = 0
-        try:
-            content_parts: list[str] = []
-            usage: dict = {}
-            with httpx.stream("POST", url, json=payload, headers=headers,
-                              timeout=config.api_timeout) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    chunk = line[len("data: "):]
-                    if chunk == "[DONE]":
-                        break
-                    event = json.loads(chunk)
-                    choices = event.get("choices") or []
-                    if choices:
-                        delta = choices[0].get("delta") or {}
-                        if delta.get("content"):
-                            content_parts.append(delta["content"])
-                        elif delta.get("reasoning"):
-                            reasoning_chunks += 1
-                    elif "usage" in event:
-                        usage = event["usage"] or {}
-            content = "".join(content_parts)
-            if not content:
-                attempt_elapsed = time.monotonic() - attempt_t0
-                raise ValueError(
-                    f"stream ended with no content after {attempt_elapsed:.0f}s "
-                    f"({reasoning_chunks} reasoning chunk(s), 0 content chunks)"
-                )
-        except httpx.HTTPError as exc:
-            attempt_elapsed = time.monotonic() - attempt_t0
-            msg = (f"api LLM call failed (attempt {attempt}/{API_STREAM_RETRIES}, "
-                   f"{attempt_elapsed:.0f}s, {reasoning_chunks} reasoning chunk(s) "
-                   f"before failure): {exc}")
-            print(f"  {msg}", file=sys.stderr)
-            emit_log(msg, level="warn")
-            if attempt < API_STREAM_RETRIES:
-                time.sleep(API_STREAM_RETRY_DELAY_S)
-                continue
-            return None
-        except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
-            msg = f"api LLM returned an unexpected response (attempt {attempt}): {exc}"
-            print(f"  {msg}", file=sys.stderr)
-            emit_log(msg, level="warn")
-            return None
-
-        _add_usage(
-            {
-                "input_tokens": usage.get("prompt_tokens", 0),
-                "output_tokens": usage.get("completion_tokens", 0),
-            },
-            0.0,
-        )
-        return content
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Pass 1 — browser scrape (Haiku)
-# ---------------------------------------------------------------------------
-
-def run_claude(system_prompt_file: Path, user_message: str) -> str:
-    """
-    Invoke the browser scrape subprocess: `claude --print --chrome` on the
-    scraper model with the given system prompt and user message. Streams each
-    output event to stdout in real time. Token usage is accumulated into _tokens.
-    """
-    print("Starting browser scrape subprocess...", flush=True)
-    t0 = time.monotonic()
-
-    system_prompt = system_prompt_file.read_text()
-    log_model_call("scrape", SCRAPER_MODEL, system_prompt, user_message)
-
-    cmd = [
-        claude_executable(),
-        "--print",
-        "--model", SCRAPER_MODEL,
-        "--verbose",
-        "--chrome",
-        "--dangerously-skip-permissions",
-        "--exclude-dynamic-system-prompt-sections",
-        "--system-prompt", system_prompt,
-        "--output-format", "stream-json",
-        user_message,
-    ]
-
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=str(BASE_DIR),
-        **_NEW_GROUP_KWARGS,  # own process group so we can kill the whole tree
-    )
-
-    # Guardrail: hard-kill the whole subprocess group if it runs past the cap so
-    # a stuck or runaway browser agent can't hang the run indefinitely.
-    timed_out = threading.Event()
-
-    def _kill_on_timeout() -> None:
-        timed_out.set()
-        _kill_process_tree(proc)
-
-    watchdog = threading.Timer(SUBPROCESS_TIMEOUT_S, _kill_on_timeout)
-    watchdog.start()
-
-    text_output = ""
-    envelope = {}
-    for line in proc.stdout:
-        line = line.rstrip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            print(f"[raw] {line}", flush=True)
-            continue
-
-        event_type = event.get("type", "")
-
-        if event_type == "assistant":
-            # Print each content block as it arrives
-            for block in event.get("message", {}).get("content", []):
-                if block.get("type") == "text":
-                    print(f"[agent] {block['text'][:200]}", flush=True)
-                elif block.get("type") == "tool_use":
-                    print(f"[tool_use] {block.get('name')} — input: {str(block.get('input',''))[:150]}", flush=True)
-        elif event_type == "tool_result":
-            content = event.get("content", "")
-            if isinstance(content, list):
-                content = " ".join(b.get("text", "") for b in content if b.get("type") == "text")
-            print(f"[tool_result] {str(content)[:200]}", flush=True)
-        elif event_type == "result":
-            envelope = event
-            text_output = event.get("result", "")
-        elif event_type == "system":
-            print(f"[system] {event.get('subtype','')} — {str(event)[:150]}", flush=True)
-
-    proc.wait()
-    watchdog.cancel()
-    elapsed = time.monotonic() - t0
-
-    if timed_out.is_set():
-        print(f"[ERROR] browser scrape exceeded {SUBPROCESS_TIMEOUT_S}s "
-              f"({elapsed:.0f}s) — subprocess group killed.", file=sys.stderr)
-        raise TimeoutError(
-            f"browser scrape exceeded {SUBPROCESS_TIMEOUT_S // 60} min and was killed"
-        )
-
-    stderr_out = proc.stderr.read()
-    if proc.returncode != 0:
-        print(f"Scrape agent exited with error (code {proc.returncode}):\n{stderr_out}", file=sys.stderr)
-    elif stderr_out.strip():
-        print(f"stderr: {stderr_out[:300]}", file=sys.stderr)
-
-    usage = envelope.get("usage", {})
-    cost = envelope.get("total_cost_usd", envelope.get("cost_usd", 0.0))
-    _add_usage(usage, cost)
-    in_tok = usage.get("input_tokens", 0)
-    out_tok = usage.get("output_tokens", 0)
-    cache_r = usage.get("cache_read_input_tokens", 0)
-    print(
-        f"Scrape done in {elapsed:.0f}s — "
-        f"in={in_tok:,} out={out_tok:,} cache_read={cache_r:,} cost=${cost:.4f}",
-        flush=True,
-    )
-    return text_output
 
 
 # ---------------------------------------------------------------------------
@@ -891,15 +389,6 @@ MAX_TAGS = 10
 _enrich_system_prompt_cache: str | None = None
 
 
-class SetupError(Exception):
-    """Raised when required user setup is missing, malformed, or unreachable.
-
-    The CLI entry point turns this into a clean `sys.exit`; the web UI catches
-    it and renders the message in the run drawer instead of launching the
-    pipeline, so both callers share one set of checks (check_setup).
-    """
-
-
 def check_setup() -> None:
     """Validate required user setup, raising SetupError on the first problem.
 
@@ -952,59 +441,6 @@ def validate_setup() -> None:
         sys.exit(str(exc))
 
 
-def _verify_api_llm(config) -> None:
-    """Verify the configured API endpoint is reachable and serving the model.
-
-    Probes the OpenAI-compatible /models endpoint with a short timeout and
-    raises SetupError if the endpoint can't be reached (wrong host / down), if the
-    response isn't an OpenAI-compatible model list, or if the list doesn't
-    include [llm.api] model — so a misconfigured backend fails at startup,
-    before Pass 1, instead of failing every clean/enrich call mid-run. Only
-    called when the [llm] backend is "api".
-    """
-    url, headers = _api_endpoint(config, "/models")
-    try:
-        resp = httpx.get(url, headers=headers, timeout=5.0)
-        resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise SetupError(
-            f"Setup error: API endpoint at {config.api_base_url} is "
-            f"unreachable ({exc}). Is it running and reachable from this "
-            "machine? Check [llm.api] base_url in profiles/config.toml, or "
-            'set [llm] backend = "claude" to use the Claude API instead.'
-        )
-    try:
-        data = resp.json()
-        available = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-    except (ValueError, AttributeError, TypeError) as exc:
-        raise SetupError(
-            f"Setup error: API endpoint at {config.api_base_url} returned "
-            f"an unexpected /models response ({exc}). Is base_url pointing at an "
-            "OpenAI-compatible endpoint (usually one ending in /v1)?"
-        )
-    if config.api_model not in available:
-        listed = ", ".join(sorted(available)) or "none"
-        raise SetupError(
-            f"Setup error: API endpoint at {config.api_base_url} does not "
-            f"serve a model with the exact id {config.api_model!r} (it serves: "
-            f"{listed}). [llm.api] model must match one of those ids exactly, "
-            'including any tag — e.g. "scout-enrich:latest", not "scout-enrich". '
-            "Copy the id from your server's model list (for Ollama, `ollama "
-            f"list`), or pull it if it's missing (e.g. `ollama pull "
-            f"{config.api_model}`)."
-        )
-
-
-# The run-start warm-up absorbs the one-time cold model load. It gets its own
-# timeout and retry budget, independent of the (deliberately tight) per-call
-# [llm.api] timeout: WARMUP_TIMEOUT_S per attempt, WARMUP_ATTEMPTS attempts.
-# Loading a model into memory has been observed at ~1 min, so a ~1 min per-attempt
-# cap plus a couple of retries recovers a server that crashed on the first
-# request — without making a wedged server hang the run for many minutes (the
-# earlier 5-min-per-attempt cap did exactly that).
-WARMUP_TIMEOUT_S = 60
-WARMUP_ATTEMPTS = 3
-
 # _warm_api_llm's max_tokens=1 ping only forces the model weights into VRAM
 # — it doesn't exercise prefill/KV-cache cost for a real-sized prompt (real
 # descriptions run 5-13 KB, per this module's docstring), which is where the
@@ -1012,54 +448,13 @@ WARMUP_ATTEMPTS = 3
 # server. _warm_up_clean_pass follows it with one real clean_one() call against a
 # similarly-sized synthetic description, retrying WARMUP_CLEAN_RETRIES times
 # with a WARMUP_CLEAN_RETRY_DELAY_S pause between attempts. Unlike the ping
-# warm-up, failure here is fatal (see _warm_up_clean_pass) — if the model
-# can't process a real-sized prompt after every retry, every real clean/
-# enrich call in the run would likely also fail, so we abort before spending
-# a browser scrape on a run that can't finish.
+# warm-up, failure here is fatal (see below) — if the model can't process a
+# real-sized prompt after every retry, every real clean/enrich call in the run
+# would likely also fail, so we abort before spending a browser scrape on a
+# run that can't finish.
 WARMUP_CLEAN_RETRIES = 3
 WARMUP_CLEAN_RETRY_DELAY_S = 5
 _WARMUP_FAKE_DESCRIPTION = "We are looking for a Senior Software Engineer to join our team. " * 80
-
-
-def _warm_api_llm(config) -> None:
-    """Fire one tiny generation so the model loads before the timed passes.
-
-    The setup check (_verify_api_llm) only lists /models — it runs no
-    inference, so the first real clean call is otherwise where the model loads
-    into VRAM and warms its compute graph. That one-time cost can be minutes and
-    can even exceed the per-call timeout, making the first job time out and fall
-    back to its raw description (a silent quality loss). Sending a throwaway
-    max_tokens=1 completion here moves that cost to run start — before Pass 1 —
-    and retries it (WARMUP_ATTEMPTS attempts, WARMUP_TIMEOUT_S each), so a
-    first-request server hiccup (an observed failure mode: the first request
-    stalls or crashes the server) is absorbed here instead of costing a real
-    job. Failures are non-fatal: the real clean/enrich calls still retry and
-    fall back, so a warm-up problem never aborts the run. Only called on the
-    api backend.
-    """
-    url, headers = _api_endpoint(config, "/chat/completions")
-    payload = {
-        "model": config.api_model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-        "stream": False,
-    }
-    emit_log("Warming model…", level="head")
-    t0 = time.monotonic()
-    for attempt in range(1, WARMUP_ATTEMPTS + 1):
-        try:
-            resp = httpx.post(url, json=payload, headers=headers,
-                              timeout=WARMUP_TIMEOUT_S)
-            resp.raise_for_status()
-            resp.json()
-            emit_log(f"Model ready ({time.monotonic() - t0:.0f}s)",
-                     level="good")
-            return
-        except (httpx.HTTPError, ValueError) as exc:
-            print(f"  model warm-up attempt {attempt} failed: {exc}",
-                  file=sys.stderr)
-    emit_log("Model warm-up failed — continuing (calls will retry)",
-             level="warn")
 
 
 def _warm_up_clean_pass(config) -> None:
@@ -1607,8 +1002,6 @@ def process_url(
 
 def main() -> None:
     """Entry point."""
-    global _log_model_calls
-
     parser = argparse.ArgumentParser(description="Scout job agent runner")
     parser.add_argument("--url", help="Scrape one ad-hoc LinkedIn URL, ignoring config")
     parser.add_argument("--log-model-calls", action="store_true",
@@ -1618,11 +1011,11 @@ def main() -> None:
 
     validate_setup()
     log = setup_logging()
-    _log_model_calls = args.log_model_calls
+    llm_common._log_model_calls = args.log_model_calls
     init_db()
     log.info("Run started (source=%s, model call logging %s)",
              "manual URL" if args.url else "config",
-             "on" if _log_model_calls else "off")
+             "on" if llm_common._log_model_calls else "off")
 
     # Tell the drawer which backend/models are driving this run. Pass 1 (the
     # browser scrape) always runs on Claude even when Pass 2/3 are on the api backend.

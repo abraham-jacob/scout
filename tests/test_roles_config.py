@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
+import agent.llm_api as llm_api
 import agent.runner as runner
 import app.config as app_config
 from agent.runner import _normalize_role, build_enrich_system_prompt
@@ -555,7 +556,7 @@ model = "gpt-oss:20b"
             return Mock(raise_for_status=lambda: None,
                         json=lambda: {"data": [{"id": "gpt-oss:20b"}]})
 
-        monkeypatch.setattr(runner.httpx, "get", _fake_get)
+        monkeypatch.setattr(llm_api.httpx, "get", _fake_get)
         runner.validate_setup()  # must not raise
         assert probed["url"] == "http://box:11434/v1/models"
 
@@ -568,7 +569,7 @@ model = "gpt-oss:20b"
         def _boom(url, **kwargs):
             raise httpx.ConnectError("refused")
 
-        monkeypatch.setattr(runner.httpx, "get", _boom)
+        monkeypatch.setattr(llm_api.httpx, "get", _boom)
         with pytest.raises(SystemExit, match="unreachable"):
             runner.validate_setup()
 
@@ -582,7 +583,7 @@ model = "gpt-oss:20b"
             return Mock(raise_for_status=lambda: None,
                         json=lambda: {"data": [{"id": "llama3:8b"}]})
 
-        monkeypatch.setattr(runner.httpx, "get", _fake_get)
+        monkeypatch.setattr(llm_api.httpx, "get", _fake_get)
         with pytest.raises(SystemExit, match="does not serve a model with the exact id"):
             runner.validate_setup()
 
@@ -596,7 +597,7 @@ model = "gpt-oss:20b"
             return Mock(raise_for_status=lambda: None,
                         json=lambda: "not json")
 
-        monkeypatch.setattr(runner.httpx, "get", _fake_get)
+        monkeypatch.setattr(llm_api.httpx, "get", _fake_get)
         with pytest.raises(SystemExit, match="unexpected /models response"):
             runner.validate_setup()
 
@@ -609,7 +610,7 @@ model = "gpt-oss:20b"
         def _boom(url, **kwargs):
             raise httpx.ConnectError("refused")
 
-        monkeypatch.setattr(runner.httpx, "get", _boom)
+        monkeypatch.setattr(llm_api.httpx, "get", _boom)
         with pytest.raises(runner.SetupError, match="unreachable"):
             runner.check_setup()
 
@@ -621,7 +622,7 @@ model = "gpt-oss:20b"
         def _fail(*a, **k):
             raise AssertionError("httpx.get must not be called for claude backend")
 
-        monkeypatch.setattr(runner.httpx, "get", _fail)
+        monkeypatch.setattr(llm_api.httpx, "get", _fail)
         runner.validate_setup()  # must not raise
 
 
