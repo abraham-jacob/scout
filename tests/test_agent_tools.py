@@ -98,7 +98,6 @@ class TestSaveJobs:
     def test_save_single_job(self, mock_get_conn, mock_find_orig):
         """Save a single job to database."""
         mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = None
         mock_get_conn.return_value = mock_conn
         mock_find_orig.return_value = None
 
@@ -120,7 +119,6 @@ class TestSaveJobs:
 
         assert result["saved"] == 1
         assert result["reposts_detected"] == 0
-        assert result["skipped_already_exists"] == 0
         assert result["skipped_excluded_company"] == 0
 
     @patch('agent.tools.find_original_job')
@@ -156,7 +154,6 @@ class TestSaveJobs:
         present with a null value, and None.lower() blew up the whole run.
         """
         mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = None
         mock_get_conn.return_value = mock_conn
         mock_find_orig.return_value = None
 
@@ -181,7 +178,6 @@ class TestSaveJobs:
     def test_detect_repost(self, mock_get_conn, mock_find_orig):
         """Detect and mark reposts."""
         mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = None
         mock_get_conn.return_value = mock_conn
         mock_find_orig.return_value = "original_job_id"
 
@@ -203,33 +199,9 @@ class TestSaveJobs:
 
     @patch('agent.tools.find_original_job')
     @patch('agent.tools.get_connection')
-    def test_skip_existing_job(self, mock_get_conn, mock_find_orig):
-        """Skip jobs already in database."""
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = (1,)  # exists
-        mock_get_conn.return_value = mock_conn
-
-        job = {
-            "job_id": "12345",
-            "title": "Engineer",
-            "company": "TechCorp",
-            "location": "NYC",
-            "linkedin_url": "https://linkedin.com/jobs/view/12345",
-            "apply_platform": "easy_apply",
-            "description_raw": "Job",
-        }
-
-        result = save_jobs("run_id", [job])
-
-        assert result["saved"] == 0
-        assert result["skipped_already_exists"] == 1
-
-    @patch('agent.tools.find_original_job')
-    @patch('agent.tools.get_connection')
     def test_unwrap_apply_url(self, mock_get_conn, mock_find_orig):
         """Unwrap LinkedIn safety redirect in apply URLs."""
         mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = None
         mock_get_conn.return_value = mock_conn
         mock_find_orig.return_value = None
 

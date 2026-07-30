@@ -48,6 +48,7 @@ falling back to hidden defaults, so a typo can't silently change behavior.
 
 import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
@@ -334,12 +335,16 @@ def _parse_llm(
             clean_params, enrich_params)
 
 
+@lru_cache(maxsize=None)
 def load_config() -> Config:
     """Load and validate the full profiles/config.toml.
 
     Raises ValueError when the file is missing, a section/key is missing, or
     a value is malformed. Failing loudly is deliberate: there are no hidden
-    defaults to fall back to.
+    defaults to fall back to. Cached for the process lifetime — call
+    load_config.cache_clear() if profiles/config.toml changes while the
+    process is running (tests do this via a fixture; there is no other
+    caller that needs a live reload).
     """
     if not CONFIG_FILE.exists():
         raise ValueError(

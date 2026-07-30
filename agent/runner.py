@@ -191,6 +191,18 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
 
 
 @functools.lru_cache(maxsize=None)
+def _load_clean_prompt() -> str:
+    """Read and cache clean_prompt.md for the process lifetime.
+
+    clean_one is called once per job across a MAX_WORKERS-wide thread pool
+    (clean_jobs); without caching, every job would re-read the same static
+    file from disk. lru_cache is thread-safe, so the first caller reads it
+    and the rest just get the cached string back.
+    """
+    return CLEAN_PROMPT_FILE.read_text()
+
+
+@functools.lru_cache(maxsize=None)
 def claude_executable() -> str:
     """Absolute path to the ``claude`` CLI, resolved once via PATH.
 
@@ -696,7 +708,7 @@ def clean_one(job: dict) -> dict | None:
         return None
 
     rendered = render_units(units)
-    result = run_headless("clean", CLEAN_PROMPT_FILE.read_text(), rendered)
+    result = run_headless("clean", _load_clean_prompt(), rendered)
     if result is None:
         print(f"  clean failed for {job.get('job_id')} — falling back to raw",
               file=sys.stderr)
