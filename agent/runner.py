@@ -60,6 +60,7 @@ import httpx
 from app.config import load_config, load_roles
 from app.database import init_db
 from app.logging_setup import get_model_logger, setup_logging
+from agent.step_keys import StepKey
 from agent.tools import create_scrape_run, save_jobs, get_existing_job_ids
 from agent.units import (
     parse_drop_response,
@@ -451,6 +452,21 @@ API_STREAM_RETRIES = 3
 API_STREAM_RETRY_DELAY_S = 10
 
 
+def _api_endpoint(config, path: str) -> tuple[str, dict]:
+    """Build the request URL and auth headers for one OpenAI-compatible API call.
+
+    ``path`` is appended to config.api_base_url (e.g. "/chat/completions",
+    "/models"); an Authorization header is added only when [llm.api] api_key
+    is set, matching how every OpenAI-compatible server (including
+    unauthenticated local ones like Ollama) expects it.
+    """
+    url = config.api_base_url.rstrip("/") + path
+    headers = {}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+    return url, headers
+
+
 def _run_api_llm(config, pass_name: str, model: str, system_prompt: str,
                  user_message: str) -> str | None:
     """POST one streamed chat-completion to the configured OpenAI-compatible endpoint.
@@ -492,10 +508,7 @@ def _run_api_llm(config, pass_name: str, model: str, system_prompt: str,
     "log" scope isn't tied to a specific search's group (see emit_log), so
     no index needs threading through here.
     """
-    url = config.api_base_url.rstrip("/") + "/chat/completions"
-    headers = {}
-    if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
+    url, headers = _api_endpoint(config, "/chat/completions")
     pass_params = (config.api_clean_params if pass_name == "clean"
                    else config.api_enrich_params)
     payload = {
@@ -798,7 +811,7 @@ def clean_jobs(jobs: list[dict], index: int = 1) -> None:
             i = futures[future]
             results[i], call_elapsed = future.result()
             done += 1
-            emit(scope="search", index=index, key="clean", status="active",
+            emit(scope="search", index=index, key=StepKey.CLEAN, status="active",
                  stat=f"{done} of {len(jobs)}")
             label = f"{jobs[i].get('title') or '?'} @ {jobs[i].get('company') or '?'}"
             if results[i] is None:
@@ -900,10 +913,7 @@ def _verify_api_llm(config) -> None:
     before Pass 1, instead of failing every clean/enrich call mid-run. Only
     called when the [llm] backend is "api".
     """
-    url = config.api_base_url.rstrip("/") + "/models"
-    headers = {}
-    if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
+    url, headers = _api_endpoint(config, "/models")
     try:
         resp = httpx.get(url, headers=headers, timeout=5.0)
         resp.raise_for_status()
@@ -978,10 +988,7 @@ def _warm_api_llm(config) -> None:
     fall back, so a warm-up problem never aborts the run. Only called on the
     api backend.
     """
-    url = config.api_base_url.rstrip("/") + "/chat/completions"
-    headers = {}
-    if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
+    url, headers = _api_endpoint(config, "/chat/completions")
     payload = {
         "model": config.api_model,
         "messages": [{"role": "user", "content": "ping"}],
@@ -1206,7 +1213,7 @@ def enrich_one(job: dict) -> dict:
 
 def _emit_enrich_progress(index: int, done: int, total: int) -> None:
     """Emit the "N of M" live-count event for one completed enrich_one call."""
-    emit(scope="search", index=index, key="enrich", status="active",
+    emit(scope="search", index=index, key=StepKey.ENRICH, status="active",
          stat=f"{done} of {total}")
 
 
@@ -1404,13 +1411,13 @@ Scrape run ID: {scrape_run_id}
 Follow the system prompt exactly. Scrape every job on page 1 into the download file.
 """
 
-    emit(scope="search", index=index, key="scrape", status="active")
+    emit(scope="search", index=index, key=StepKey.SCRAPE, status="active")
     emit_log("Scraping LinkedIn…", level="head", index=index)
     run_claude(prompt_file, user_message)
 
     all_jobs = load_downloaded_jobs(scrape_run_id)
     scraped = len(all_jobs) if all_jobs else 0
-    emit(scope="search", index=index, key="scrape", status="done", stat=f"{scraped} scraped")
+    emit(scope="search", index=index, key=StepKey.SCRAPE, status="done", stat=f"{scraped} scraped")
     emit_log(f"Scraped {scraped} jobs", level="good", index=index)
 
     if all_jobs is None:
@@ -1427,8 +1434,8 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
         )
         print(f"WARNING: {msg}", file=sys.stderr)
         logging.getLogger("scout").warning(msg)
-        emit(scope="search", index=index, key="filter", status="done", stat="0 of 0 kept")
-        emit(scope="search", index=index, key="enrich", status="done", stat="0 kept")
+        emit(scope="search", index=index, key=StepKey.FILTER, status="done", stat="0 of 0 kept")
+        emit(scope="search", index=index, key=StepKey.ENRICH, status="done", stat="0 kept")
         return []
 
     if job_id:
@@ -1439,17 +1446,17 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
                    f"been removed, or isn't accessible ({reason}). Nothing to save.")
             print(f"WARNING: {msg}", file=sys.stderr)
             logging.getLogger("scout").warning(msg)
-            emit(scope="search", index=index, key="filter", status="done", stat="invalid job")
-            emit(scope="search", index=index, key="enrich", status="done", stat="0 kept")
+            emit(scope="search", index=index, key=StepKey.FILTER, status="done", stat="invalid job")
+            emit(scope="search", index=index, key=StepKey.ENRICH, status="done", stat="0 kept")
             emit_log(msg, level="warn", index=index)
             return []
 
     # Deterministic pre-filters — cheap, and done BEFORE enrichment so we never
     # spend a Sonnet call on a job we're going to drop anyway.
-    emit(scope="search", index=index, key="filter", status="active")
+    emit(scope="search", index=index, key=StepKey.FILTER, status="active")
     existing = set(get_existing_job_ids())
     survivors = apply_deterministic_filters(all_jobs, existing)
-    emit(scope="search", index=index, key="filter", status="done",
+    emit(scope="search", index=index, key=StepKey.FILTER, status="done",
          stat=f"{len(survivors)} of {len(all_jobs)} kept")
     emit_log(f"Filter: {len(survivors)} of {len(all_jobs)} kept",
              level="info", index=index)
@@ -1457,23 +1464,23 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
     print(f"{len(all_jobs)} scraped; {len(survivors)} survive deterministic "
           f"filters (already-in-DB / applied / closed / excluded companies).")
     if not survivors:
-        emit(scope="search", index=index, key="enrich", status="done", stat="0 kept")
+        emit(scope="search", index=index, key=StepKey.ENRICH, status="done", stat="0 kept")
         return []
 
     # Description cleaning: strip EEO boilerplate / benefits tail before Sonnet.
-    emit(scope="search", index=index, key="clean", status="active")
+    emit(scope="search", index=index, key=StepKey.CLEAN, status="active")
     clean_jobs(survivors, index)
-    emit(scope="search", index=index, key="clean", status="done",
+    emit(scope="search", index=index, key=StepKey.CLEAN, status="done",
          stat=f"{len(survivors)} cleaned")
 
     # Per-job enrichment: role_type (configured roles / Other) + tags + scoring.
-    emit(scope="search", index=index, key="enrich", status="active")
+    emit(scope="search", index=index, key=StepKey.ENRICH, status="active")
     enrich_jobs(survivors, index)
 
     # Keep only the configured role types; drop Other (and any that failed to enrich).
     role_names = {role.name for role in load_roles()}
     kept = [j for j in survivors if j.get("role_type") in role_names]
-    emit(scope="search", index=index, key="enrich", status="done",
+    emit(scope="search", index=index, key=StepKey.ENRICH, status="done",
          stat=f"{len(kept)} kept")
     print(f"Enriched {len(survivors)}; kept {len(kept)} "
           f"({'/'.join(sorted(role_names))}), "
@@ -1510,22 +1517,22 @@ def process_url(
     try:
         jobs = run_scrape(url, run_id, index, job_id=job_id)
     except TimeoutError as exc:
-        emit(scope="search", index=index, key="scrape", status="error", stat="timed out")
+        emit(scope="search", index=index, key=StepKey.SCRAPE, status="error", stat="timed out")
         print(f"\nERROR: {exc}. Run aborted — nothing saved.", file=sys.stderr)
         logging.getLogger("scout").error("Scrape run %s aborted: %s", run_id, exc)
         print_token_summary()
         return False
 
-    emit(scope="search", index=index, key="save", status="active")
+    emit(scope="search", index=index, key=StepKey.SAVE, status="active")
     if not jobs:
-        emit(scope="search", index=index, key="save", status="done", stat="0 saved")
+        emit(scope="search", index=index, key=StepKey.SAVE, status="done", stat="0 saved")
         print("No jobs to save.")
         logging.getLogger("scout").info("Scrape run %s: no jobs to save", run_id)
         print_token_summary()
         return True
 
     result = save_jobs(run_id, jobs)
-    emit(scope="search", index=index, key="save", status="done",
+    emit(scope="search", index=index, key=StepKey.SAVE, status="done",
          stat=f"{result['saved']} saved, {result['reposts_detected']} reposts")
     emit_log(f"Saved {result['saved']} jobs · {result['reposts_detected']} reposts",
              level="good", index=index)
@@ -1581,7 +1588,7 @@ def main() -> None:
         _warm_api_llm(config)
         _warm_up_clean_pass(config)
 
-    emit(scope="global", key="start", status="done")
+    emit(scope="global", key=StepKey.START, status="done")
 
     if args.url:
         url = resolve_scan_url(args.url)

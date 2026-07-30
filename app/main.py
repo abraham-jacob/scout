@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from agent.runner import SetupError, check_setup, extract_single_job_id, resolve_scan_url
+from agent.step_keys import StepKey
 from app.config import load_config, load_roles, role_color_map
 from app.database import JOB_STATUSES, get_connection, init_db
 from app.logging_setup import setup_logging
@@ -38,14 +39,14 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 # steps run once per configured LinkedIn search (keys must match runner.py's
 # emit calls).
 GLOBAL_STEPS = [
-    ("start", "Starting agent"),
+    (StepKey.START, "Starting agent"),
 ]
 SEARCH_STEPS = [
-    ("scrape", "Scraping LinkedIn (sub-agent)"),
-    ("filter", "Filtering jobs"),
-    ("clean", "Cleaning descriptions"),
-    ("enrich", "Classifying & summarizing"),
-    ("save", "Writing to storage"),
+    (StepKey.SCRAPE, "Scraping LinkedIn (sub-agent)"),
+    (StepKey.FILTER, "Filtering jobs"),
+    (StepKey.CLEAN, "Cleaning descriptions"),
+    (StepKey.ENRICH, "Classifying & summarizing"),
+    (StepKey.SAVE, "Writing to storage"),
 ]
 
 # Max lines kept in the run drawer's event-log pane (oldest lines drop off).
@@ -289,7 +290,7 @@ def _fetch_jobs(
     order_sql = ("j.match_score DESC NULLS LAST, j.date_scraped DESC"
                  if sort == "match" else "j.date_scraped DESC")
 
-    rows = conn.execute(
+    result = conn.execute(
         f"""
         SELECT j.job_id, j.title, j.company, j.location,
                j.linkedin_url, j.apply_url, j.apply_platform,
@@ -301,16 +302,11 @@ def _fetch_jobs(
         ORDER BY {order_sql}
         """,
         params,
-    ).fetchall()
+    )
+    cols = [d[0] for d in result.description]
+    rows = result.fetchall()
     conn.close()
 
-    cols = [
-        "job_id", "title", "company", "location", "linkedin_url",
-        "apply_url", "apply_platform", "salary_range", "status",
-        "seen", "is_repost", "original_job_id",
-        "description_raw", "description_summary", "date_scraped", "role_type",
-        "tags", "match_score", "match_reason", "dealbreakers",
-    ]
     return [dict(zip(cols, row)) for row in rows]
 
 

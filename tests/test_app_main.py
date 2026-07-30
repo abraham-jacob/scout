@@ -23,6 +23,15 @@ def client():
     return TestClient(app)
 
 
+_JOB_COLS = (
+    "job_id", "title", "company", "location", "linkedin_url",
+    "apply_url", "apply_platform", "salary_range", "status",
+    "seen", "is_repost", "original_job_id",
+    "description_raw", "description_summary", "date_scraped", "role_type",
+    "tags", "match_score", "match_reason", "dealbreakers",
+)
+
+
 @pytest.fixture
 def reset_run_state():
     """Reset run state before and after each test."""
@@ -41,6 +50,7 @@ class TestFetchJobs:
     def test_fetch_all_jobs(self, mock_get_conn):
         """Fetch all jobs without filters."""
         mock_conn = MagicMock()
+        mock_conn.execute.return_value.description = [(c,) for c in _JOB_COLS]
         mock_conn.execute.return_value.fetchall.return_value = [
             ("job1", "Engineer", "TechCorp", "Springfield", "https://linkedin.com/jobs/view/job1",
              "https://apply.com", "easy_apply", "$150k", "new", False, False, None, "Raw desc",
@@ -62,6 +72,7 @@ class TestFetchJobs:
     def test_fetch_jobs_by_role_type(self, mock_get_conn):
         """Fetch jobs filtered by role type."""
         mock_conn = MagicMock()
+        mock_conn.execute.return_value.description = [(c,) for c in _JOB_COLS]
         mock_conn.execute.return_value.fetchall.return_value = [
             ("job1", "Manager", "Corp", "Springfield", "url", "apply", "easy_apply", None, "new",
              False, False, None, "desc", "summary", "2026-01-01", "Manager"),
@@ -80,6 +91,7 @@ class TestFetchJobs:
     def test_fetch_jobs_by_status(self, mock_get_conn):
         """Fetch jobs filtered by status."""
         mock_conn = MagicMock()
+        mock_conn.execute.return_value.description = [(c,) for c in _JOB_COLS]
         mock_conn.execute.return_value.fetchall.return_value = [
             ("job1", "Engineer", "Corp", "Springfield", "url", "apply", "easy_apply", None, "applied",
              True, False, None, "desc", "summary", "2026-01-01", "IC"),
