@@ -5,7 +5,7 @@ from logging.handlers import TimedRotatingFileHandler
 
 import pytest
 
-import agent.runner as runner
+import agent.llm_common as llm_common
 import app.config as app_config
 from app.logging_setup import (
     APP_LOG_NAME,
@@ -99,23 +99,23 @@ class TestModelLogger:
 
 
 class TestRunnerLogModelCall:
-    """Test agent.runner.log_model_call gating and payload."""
+    """Test agent.llm_common.log_model_call gating and payload."""
 
     def test_disabled_by_default(self, tmp_path, monkeypatch):
         """Without --log-model-calls nothing is written."""
         log_dir = _point_logs_at(tmp_path)
-        monkeypatch.setattr(runner, "_log_model_calls", False)
+        monkeypatch.setattr(llm_common, "_log_model_calls", False)
 
-        runner.log_model_call("enrich", "model-x", "system", "user")
+        llm_common.log_model_call("enrich", "model-x", "system", "user")
 
         assert not (log_dir / "model_calls.log").exists()
 
     def test_enabled_writes_readable_block(self, tmp_path, monkeypatch):
         """When enabled, a labeled block with prompts verbatim lands."""
         log_dir = _point_logs_at(tmp_path)
-        monkeypatch.setattr(runner, "_log_model_calls", True)
+        monkeypatch.setattr(llm_common, "_log_model_calls", True)
 
-        runner.log_model_call("scrape", "model-x", "line one\nline two",
+        llm_common.log_model_call("scrape", "model-x", "line one\nline two",
                               "the user message")
 
         content = (log_dir / "model_calls.log").read_text()

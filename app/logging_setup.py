@@ -77,7 +77,7 @@ def get_model_logger() -> logging.Logger:
     """Configure and return the model-interaction logger (idempotent).
 
     The handler adds no prefix of its own — each message (one pre-formatted
-    block per Claude call, built by runner.log_model_call) lands verbatim.
+    block per Claude call, built by agent.llm_common.log_model_call) lands verbatim.
     """
     logger = logging.getLogger(MODEL_LOG_NAME)
     if _is_configured(logger):

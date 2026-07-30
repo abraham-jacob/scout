@@ -3,7 +3,6 @@
 import json
 import re
 import types
-import httpx
 import pytest
 import tempfile
 import threading
@@ -12,14 +11,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timezone
 
+import agent.claude as claude
 import agent.runner as runner
+from agent.llm_common import PROGRESS_SENTINEL
 from agent.runner import (
     _file_job_to_record,
     _extract_json,
     load_downloaded_jobs,
     apply_deterministic_filters,
-    _add_usage,
-    print_token_summary,
     run_headless,
 )
 
@@ -323,88 +322,19 @@ class TestApplyDeterministicFilters:
         assert all("job_id" in job for job in result)
 
 
-class TestClaudeExecutable:
-    """Test cross-platform resolution of the claude CLI (C)."""
-
-    def test_resolves_via_which(self, monkeypatch):
-        """Returns the absolute path shutil.which finds."""
-        import agent.runner as runner
-        runner.claude_executable.cache_clear()
-        monkeypatch.setattr(runner.shutil, "which", lambda name: "/usr/local/bin/claude")
-        try:
-            assert runner.claude_executable() == "/usr/local/bin/claude"
-        finally:
-            runner.claude_executable.cache_clear()
-
-    def test_raises_when_missing(self, monkeypatch):
-        """Raises FileNotFoundError when claude isn't on PATH."""
-        import agent.runner as runner
-        runner.claude_executable.cache_clear()
-        monkeypatch.setattr(runner.shutil, "which", lambda name: None)
-        try:
-            with pytest.raises(FileNotFoundError, match="claude"):
-                runner.claude_executable()
-        finally:
-            runner.claude_executable.cache_clear()
+class TestValidateSetup:
+    """Test validate_setup's CLI-facing wrapper around check_setup."""
 
     def test_validate_setup_exits_when_claude_missing(self, monkeypatch):
         """validate_setup turns a missing claude CLI into a clean startup exit."""
-        import agent.runner as runner
-        runner.claude_executable.cache_clear()
+        claude.claude_executable.cache_clear()
         monkeypatch.setattr(runner, "load_roles", lambda: [Mock(profile=None)])
-        monkeypatch.setattr(runner.shutil, "which", lambda name: None)
+        monkeypatch.setattr(claude.shutil, "which", lambda name: None)
         try:
             with pytest.raises(SystemExit):
                 runner.validate_setup()
         finally:
-            runner.claude_executable.cache_clear()
-
-
-class TestKillProcessTree:
-    """Test cross-platform subprocess-tree kill (B)."""
-
-    def test_posix_kills_process_group(self, monkeypatch):
-        """On POSIX, SIGKILL is sent to the child's process group."""
-        import agent.runner as runner
-        killed = {}
-        monkeypatch.setattr(runner.os, "name", "posix")
-        monkeypatch.setattr(runner.os, "getpgid", lambda pid: 4242)
-        monkeypatch.setattr(runner.os, "killpg",
-                            lambda pgid, sig: killed.update(pgid=pgid, sig=sig))
-        proc = MagicMock()
-        proc.pid = 999
-
-        runner._kill_process_tree(proc)
-
-        assert killed == {"pgid": 4242, "sig": runner.signal.SIGKILL}
-
-    def test_posix_swallows_already_dead(self, monkeypatch):
-        """A process that already exited doesn't raise out of the kill."""
-        import agent.runner as runner
-        monkeypatch.setattr(runner.os, "name", "posix")
-
-        def _gone(pid):
-            raise ProcessLookupError()
-
-        monkeypatch.setattr(runner.os, "getpgid", _gone)
-        proc = MagicMock()
-        proc.pid = 1
-
-        runner._kill_process_tree(proc)  # must not raise
-
-    def test_windows_uses_taskkill(self, monkeypatch):
-        """On Windows, taskkill /T is invoked to walk the tree."""
-        import agent.runner as runner
-        calls = {}
-        monkeypatch.setattr(runner.os, "name", "nt")
-        monkeypatch.setattr(runner.subprocess, "run",
-                            lambda cmd, **kw: calls.update(cmd=cmd))
-        proc = MagicMock()
-        proc.pid = 4321
-
-        runner._kill_process_tree(proc)
-
-        assert calls["cmd"] == ["taskkill", "/F", "/T", "/PID", "4321"]
+            claude.claude_executable.cache_clear()
 
 
 class TestRunScrapeNoFile:
@@ -604,53 +534,6 @@ class TestProcessUrlSingleJob:
         assert names["name"] == "Custom label"
 
 
-class TestTokenTracking:
-    """Test token and cost tracking."""
-
-    def test_add_usage_increments_tokens(self):
-        """Add usage increments token counters."""
-        from agent.runner import _tokens, _tokens_lock
-
-        with _tokens_lock:
-            initial_input = _tokens["input"]
-            initial_output = _tokens["output"]
-
-        usage = {
-            "input_tokens": 100,
-            "output_tokens": 50,
-            "cache_read_input_tokens": 200,
-            "cache_creation_input_tokens": 150,
-        }
-
-        _add_usage(usage, 0.05)
-
-        with _tokens_lock:
-            assert _tokens["input"] == initial_input + 100
-            assert _tokens["output"] == initial_output + 50
-            assert _tokens["cache_read"] >= 200
-
-    def test_add_usage_zero_values(self):
-        """Handle empty usage dict."""
-        from agent.runner import _tokens, _tokens_lock
-
-        with _tokens_lock:
-            initial_calls = _tokens["calls"]
-
-        _add_usage({}, 0.0)
-
-        with _tokens_lock:
-            assert _tokens["calls"] == initial_calls + 1
-
-    def test_print_token_summary(self, capsys):
-        """Print token summary."""
-        print_token_summary()
-
-        captured = capsys.readouterr()
-        assert "TOKEN USAGE SUMMARY" in captured.out
-        assert "API calls" in captured.out
-        assert "Estimated cost" in captured.out
-
-
 def _fake_config(**overrides):
     """A minimal Config-like object for backend-dispatch tests."""
     base = dict(
@@ -665,216 +548,6 @@ def _fake_config(**overrides):
     )
     base.update(overrides)
     return types.SimpleNamespace(**base)
-
-
-class _FakeStreamResponse:
-    """Minimal stand-in for the context-managed Response httpx.stream() yields."""
-
-    def __init__(self, lines):
-        self._lines = lines
-
-    def raise_for_status(self):
-        pass
-
-    def iter_lines(self):
-        return iter(self._lines)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        return False
-
-
-def _sse_lines(content_pieces=(), usage=None, reasoning_pieces=()):
-    """Build fake `data: ...` SSE lines matching Ollama's streaming shape.
-
-    Reasoning pieces are emitted first (as delta.reasoning, empty delta.content
-    — confirmed via a live curl test against Ollama not to be mixed into the
-    real content), then content pieces (delta.content), then one final chunk
-    with empty choices and the usage object (when stream_options.include_usage
-    is set), then the [DONE] sentinel.
-    """
-    lines = []
-    for r in reasoning_pieces:
-        lines.append("data: " + json.dumps(
-            {"choices": [{"delta": {"content": "", "reasoning": r}}]}))
-    for c in content_pieces:
-        lines.append("data: " + json.dumps({"choices": [{"delta": {"content": c}}]}))
-    if usage is not None:
-        lines.append("data: " + json.dumps({"choices": [], "usage": usage}))
-    lines.append("data: [DONE]")
-    return lines
-
-
-class TestRunHeadlessBackend:
-    """Test the Pass 2/3 backend dispatcher (run_headless)."""
-
-    def test_claude_backend_uses_subprocess_path(self, monkeypatch):
-        """backend=claude routes to _run_claude_headless with the pass's model."""
-        monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
-        seen = {}
-
-        def _fake_claude(model, sp, um):
-            seen["model"] = model
-            return '{"ok": 1}'
-
-        monkeypatch.setattr(runner, "_run_claude_headless", _fake_claude)
-        monkeypatch.setattr(runner, "_run_api_llm",
-                            lambda *a, **k: pytest.fail("api path used"))
-
-        assert run_headless("clean", "sys", "usr") == '{"ok": 1}'
-        assert seen["model"] == runner.CLEAN_MODEL
-        assert run_headless("enrich", "sys", "usr") == '{"ok": 1}'
-        assert seen["model"] == runner.ENRICH_MODEL
-
-    def test_api_backend_posts_and_maps_usage(self, monkeypatch):
-        """backend=api streams from the server and maps OpenAI usage at zero cost."""
-        monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="api", api_base_url="http://box:11434/v1",
-            api_model="gpt-oss:20b", api_key="k", api_timeout=42.0))
-
-        captured = {}
-
-        def _fake_stream(method, url, json=None, headers=None, timeout=None):
-            captured["method"] = method
-            captured["url"] = url
-            captured["json"] = json
-            captured["headers"] = headers
-            captured["timeout"] = timeout
-            return _FakeStreamResponse(_sse_lines(
-                content_pieces=['{"description_clean"', ': "x"}'],
-                usage={"prompt_tokens": 11, "completion_tokens": 4},
-                reasoning_pieces=["thinking…"],
-            ))
-
-        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
-
-        from agent.runner import _tokens, _tokens_lock
-        with _tokens_lock:
-            in0, out0, cost0 = _tokens["input"], _tokens["output"], _tokens["cost_usd"]
-
-        result = run_headless("clean", "sys", "usr")
-
-        assert result == '{"description_clean": "x"}'
-        assert captured["method"] == "POST"
-        assert captured["url"] == "http://box:11434/v1/chat/completions"
-        assert captured["json"]["model"] == "gpt-oss:20b"
-        assert captured["json"]["stream"] is True
-        assert captured["json"]["stream_options"] == {"include_usage": True}
-        assert captured["json"]["messages"][0]["role"] == "system"
-        assert captured["headers"]["Authorization"] == "Bearer k"
-        assert captured["timeout"] == 42.0
-        with _tokens_lock:
-            assert _tokens["input"] == in0 + 11
-            assert _tokens["output"] == out0 + 4
-            assert _tokens["cost_usd"] == cost0  # this backend isn't metered by the pipeline
-
-    def test_api_backend_no_api_key_omits_auth_header(self, monkeypatch):
-        """Without api_key, no Authorization header is sent."""
-        monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="api", api_base_url="http://box:11434/v1",
-            api_model="m", api_key=None, api_timeout=5.0))
-        captured = {}
-
-        def _fake_stream(method, url, json=None, headers=None, timeout=None):
-            captured["headers"] = headers
-            return _FakeStreamResponse(_sse_lines(content_pieces=["{}"], usage={}))
-
-        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
-        run_headless("enrich", "sys", "usr")
-        assert "Authorization" not in captured["headers"]
-
-    def test_api_backend_http_error_returns_none(self, monkeypatch):
-        """A network/HTTP failure exhausts all retries and returns None."""
-        monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="api", api_base_url="http://box:11434/v1",
-            api_model="m", api_key=None, api_timeout=5.0))
-        slept = []
-        monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
-
-        def _boom(*a, **k):
-            raise httpx.ConnectError("refused")
-
-        monkeypatch.setattr(runner.httpx, "stream", _boom)
-        assert run_headless("clean", "sys", "usr") is None
-        # Retried API_STREAM_RETRIES times, sleeping between attempts (not after the last).
-        assert slept == [runner.API_STREAM_RETRY_DELAY_S] * (runner.API_STREAM_RETRIES - 1)
-
-    def test_api_backend_http_error_recovers_on_retry(self, monkeypatch):
-        """A stream that fails once then succeeds is not treated as a failure."""
-        monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="api", api_base_url="http://box:11434/v1",
-            api_model="m", api_key=None, api_timeout=5.0))
-        monkeypatch.setattr(runner.time, "sleep", lambda s: None)
-        calls = {"n": 0}
-
-        def _fake_stream(*a, **k):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise httpx.ReadTimeout("stalled")
-            return _FakeStreamResponse(_sse_lines(content_pieces=["{}"], usage={}))
-
-        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
-        assert run_headless("clean", "sys", "usr") == "{}"
-        assert calls["n"] == 2
-
-    def test_api_backend_malformed_response_returns_none(self, monkeypatch):
-        """A stream with no content chunks at all returns None, not a crash."""
-        monkeypatch.setattr(runner, "load_config", lambda: _fake_config(
-            llm_backend="api", api_base_url="http://box:11434/v1",
-            api_model="m", api_key=None, api_timeout=5.0))
-
-        def _fake_stream(*a, **k):
-            return _FakeStreamResponse(["data: [DONE]"])
-
-        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
-        assert run_headless("enrich", "sys", "usr") is None
-
-    def _capture_payload(self, monkeypatch, config):
-        """Run one api call under `config` and return the streamed JSON payload."""
-        monkeypatch.setattr(runner, "load_config", lambda: config)
-        captured = {}
-
-        def _fake_stream(method, url, json=None, headers=None, timeout=None):
-            captured["json"] = json
-            return _FakeStreamResponse(_sse_lines(content_pieces=["{}"], usage={}))
-
-        monkeypatch.setattr(runner.httpx, "stream", _fake_stream)
-        return captured
-
-    def test_api_per_pass_params_merged(self, monkeypatch):
-        """[llm.api.<pass>] params are merged into the payload for that pass."""
-        config = _fake_config(
-            llm_backend="api", api_base_url="http://box/v1", api_model="m",
-            api_clean_params={"temperature": 0.2, "reasoning_effort": "low"},
-            api_enrich_params={"reasoning_effort": "high"})
-        captured = self._capture_payload(monkeypatch, config)
-
-        run_headless("clean", "sys", "usr")
-        assert captured["json"]["temperature"] == 0.2
-        assert captured["json"]["reasoning_effort"] == "low"
-
-        run_headless("enrich", "sys", "usr")
-        assert captured["json"]["reasoning_effort"] == "high"
-        # enrich set no temperature, so none is sent — server default applies
-        assert "temperature" not in captured["json"]
-
-    def test_api_params_cannot_clobber_owned_fields(self, monkeypatch):
-        """model/messages/stream/stream_options are re-asserted even if a param
-        table sets them.
-
-        config validation rejects those keys, but the merge order guards against
-        them defensively too.
-        """
-        config = _fake_config(
-            llm_backend="api", api_base_url="http://box/v1", api_model="m",
-            api_clean_params={"model": "evil", "stream": False})
-        captured = self._capture_payload(monkeypatch, config)
-
-        run_headless("clean", "sys", "usr")
-        assert captured["json"]["model"] == "m"
-        assert captured["json"]["stream"] is True
 
 
 class TestEnrichJobsWarmup:
@@ -1122,10 +795,10 @@ class TestCleanJobsRetry:
 
         runner.clean_jobs(jobs)
         msgs = [
-            json.loads(line[len(runner.PROGRESS_SENTINEL):])["msg"]
+            json.loads(line[len(PROGRESS_SENTINEL):])["msg"]
             for line in capsys.readouterr().out.splitlines()
-            if line.startswith(runner.PROGRESS_SENTINEL)
-            and json.loads(line[len(runner.PROGRESS_SENTINEL):]).get("scope") == "log"
+            if line.startswith(PROGRESS_SENTINEL)
+            and json.loads(line[len(PROGRESS_SENTINEL):]).get("scope") == "log"
         ]
         assert any(re.search(r"✓ cleaned .*\ds", m) for m in msgs)
         assert any(re.search(r"clean failed .*\ds", m) for m in msgs)

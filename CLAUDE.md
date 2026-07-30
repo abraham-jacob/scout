@@ -105,14 +105,14 @@ and `runner.download_dir()` expands it, so it's the only config path with a
 cross-platform default rather than failing loudly. `[llm]` carries `backend`
 (required, `"claude"` or `"api"` — no default, so the config always states
 which one) which selects the backend for the two **headless** passes —
-description cleaning and enrichment/scoring — via `runner.run_headless()`, and
+description cleaning and enrichment/scoring — via `agent/llm.py::run_headless()`, and
 `max_workers` (required, the Pass 2/3 pool width, tuned per backend). `"api"`
 routes both passes (together, never split) to any OpenAI-compatible endpoint
 (e.g. Ollama, local or remote) configured under `[llm.api]` (`base_url`, `model`,
 optional `api_key`/`timeout`). Two optional per-pass sub-tables, `[llm.api.clean]`
 and `[llm.api.enrich]`, carry request parameters (e.g. `temperature`,
 `reasoning_effort`) merged verbatim into that pass's chat-completion JSON by
-`runner._run_api_llm`; values must be scalars and may not set the
+`agent/llm_api.py::_run_api_llm`; values must be scalars and may not set the
 pipeline-owned `model`/`messages`/`stream` keys (validated in
 `config._parse_api_params`). The browser scrape always runs on Claude.
 Each role carries the classification definition injected into the prompt's
@@ -143,6 +143,30 @@ remained).
 Plain Python DB helpers (`create_scrape_run`, `get_existing_job_ids`, `save_jobs`,
 etc.) called directly by `runner.py`.
 
+### The LLM-calling layer (`agent/llm_common.py`, `agent/claude.py`, `agent/llm_api.py`, `agent/llm.py`)
+`runner.py` holds only pipeline orchestration; every function that actually talks to
+a backend lives in one of four small modules, one-directional
+(`runner.py` → `llm.py` → {`claude.py`, `llm_api.py`} → `llm_common.py`, never the
+reverse — this is what keeps the import graph acyclic):
+- `agent/llm_common.py` — cross-cutting plumbing only, no backend logic: progress
+  events (`emit`/`emit_log`/`PROGRESS_SENTINEL`), `log_model_call()`, token/cost
+  accounting (`_add_usage`/`print_token_summary`/`_tokens`), and `SetupError` (raised
+  by both `runner.py`'s `check_setup` and `llm_api.py`'s `_verify_api_llm` — neither
+  owns the other, so it lives in the shared leaf module).
+- `agent/claude.py` — everything that talks to the Claude CLI: `run_claude` (Pass 1
+  browser scrape), `_run_claude_headless` (Pass 2/3 claude backend), `claude_executable`,
+  `_kill_process_tree`, and the `SCRAPER_MODEL`/`CLEAN_MODEL`/`ENRICH_MODEL` constants.
+- `agent/llm_api.py` — everything that talks to the OpenAI-compatible endpoint:
+  `_run_api_llm`, `_verify_api_llm`, `_warm_api_llm`, `_api_endpoint`.
+- `agent/llm.py` — the thin router: `run_headless()` dispatches to `claude.py` or
+  `llm_api.py` based on `config.llm_backend`.
+
+`runner.py` imports directly from whichever module owns a given name (e.g.
+`CLEAN_MODEL`/`ENRICH_MODEL` come straight from `agent.claude`, not funneled through
+`agent.llm`) — only the actual Pass 2/3 backend *dispatch* goes through `llm.py`.
+Tests mirror this: `tests/test_agent_llm_common.py`, `tests/test_agent_claude.py`,
+`tests/test_agent_llm_api.py`, `tests/test_agent_llm.py`.
+
 ## Conventions
 
 - **Never work on the `main` branch directly.** Always create a feature branch
@@ -155,7 +179,7 @@ etc.) called directly by `runner.py`.
   it also regenerates the coverage badge onto the unprotected `badges` branch.
 - **Every Python function must have a docstring** — this is a hard project rule; the
   codebase follows it uniformly.
-- Claude model IDs are pinned as constants in `runner.py` (`SCRAPER_MODEL` and
+- Claude model IDs are pinned as constants in `agent/claude.py` (`SCRAPER_MODEL` and
   `CLEAN_MODEL` = Haiku, `ENRICH_MODEL` = Sonnet); the api-backend model comes
   from `[llm.api] model` in the config instead. Each `claude` subprocess has a
   `SUBPROCESS_TIMEOUT_S` wall-clock kill (api calls use `[llm.api] timeout`);
