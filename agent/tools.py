@@ -7,7 +7,6 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs, unquote
 
-from app.config import load_config
 from app.database import get_connection, find_original_job
 
 
@@ -59,22 +58,19 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
     """
     Persist a list of enriched jobs. Assumes the caller (apply_deterministic_filters,
     via one earlier get_existing_job_ids() fetch) already dropped jobs already in
-    the DB. Skips excluded companies (config [filters] exclude_companies),
-    detects reposts, and persists each job's role_type, description_summary,
-    and tags (produced by the per-job enrichment step in runner.py). Returns
-    a summary of what was saved vs skipped.
+    the DB, applied, closed, or from an excluded company (config [filters]
+    exclude_companies) — nothing between that filter and here changes a job's
+    company, so this trusts it rather than re-checking. Detects reposts, and
+    persists each job's role_type, description_summary, and tags (produced by
+    the per-job enrichment step in runner.py). Returns a summary of what was
+    saved.
     """
-    excluded = {c.lower() for c in load_config().exclude_companies}
-    saved, skipped_excluded, reposts = 0, 0, 0
+    saved, reposts = 0, 0
     conn = get_connection()
 
     for job in jobs:
         # `or ""` (not a .get default): the scrape can yield company = None.
         company = job.get("company") or ""
-
-        if company.lower().strip() in excluded:
-            skipped_excluded += 1
-            continue
 
         job_id = job["job_id"]
 
@@ -135,5 +131,4 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
     return {
         "saved": saved,
         "reposts_detected": reposts,
-        "skipped_excluded_company": skipped_excluded,
     }

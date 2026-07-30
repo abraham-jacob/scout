@@ -119,31 +119,6 @@ class TestSaveJobs:
 
         assert result["saved"] == 1
         assert result["reposts_detected"] == 0
-        assert result["skipped_excluded_company"] == 0
-
-    @patch('agent.tools.find_original_job')
-    @patch('agent.tools.get_connection')
-    def test_skip_excluded_company(self, mock_get_conn, mock_find_orig):
-        """Skip excluded-company jobs."""
-        mock_conn = MagicMock()
-        mock_get_conn.return_value = mock_conn
-        mock_find_orig.return_value = None
-
-        job = {
-            "job_id": "12345",
-            "title": "Engineer",
-            "company": "ExcludedCorp",
-            "location": "NYC",
-            "linkedin_url": "https://linkedin.com/jobs/view/12345",
-            "apply_platform": "easy_apply",
-            "description_raw": "Job",
-            "role_type": "IC",
-        }
-
-        result = save_jobs("run_id", [job])
-
-        assert result["saved"] == 0
-        assert result["skipped_excluded_company"] == 1
 
     @patch('agent.tools.find_original_job')
     @patch('agent.tools.get_connection')
@@ -171,7 +146,6 @@ class TestSaveJobs:
         result = save_jobs("run_id", [job])
 
         assert result["saved"] == 1
-        assert result["skipped_excluded_company"] == 0
 
     @patch('agent.tools.find_original_job')
     @patch('agent.tools.get_connection')
