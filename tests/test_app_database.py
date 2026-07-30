@@ -11,7 +11,6 @@ from app.database import (
     init_db,
     find_original_job,
     JOB_STATUSES,
-    APPLY_PLATFORMS,
     _JOBS_COLUMNS,
 )
 
@@ -94,7 +93,6 @@ class TestInitDb:
             assert "run_id" in columns
             assert "search_name" in columns
             assert "linkedin_search_url" in columns
-            assert "role_type" in columns
             assert "jobs_found" in columns
             assert "run_at" in columns
 
@@ -353,11 +351,3 @@ class TestConstants:
         assert "rejected" in JOB_STATUSES
         assert "dismissed" in JOB_STATUSES
         assert len(JOB_STATUSES) >= 5
-
-    def test_apply_platforms_defined(self):
-        """APPLY_PLATFORMS contains expected values."""
-        assert "greenhouse" in APPLY_PLATFORMS
-        assert "ashby" in APPLY_PLATFORMS
-        assert "workday" in APPLY_PLATFORMS
-        assert "easy_apply" in APPLY_PLATFORMS
-        assert "other" in APPLY_PLATFORMS

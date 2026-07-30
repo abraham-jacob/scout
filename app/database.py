@@ -14,8 +14,6 @@ JOB_STATUSES = [
     "dismissed",
 ]
 
-APPLY_PLATFORMS = ["greenhouse", "ashby", "workday", "easy_apply", "other"]
-
 
 def get_connection() -> duckdb.DuckDBPyConnection:
     """Return a connection to the Scout DuckDB database."""
@@ -27,7 +25,6 @@ _SCRAPE_RUNS_COLUMNS = """(
     run_id              VARCHAR PRIMARY KEY,
     search_name         VARCHAR,
     linkedin_search_url VARCHAR,
-    role_type           VARCHAR,
     jobs_found          INTEGER DEFAULT 0,
     run_at              TIMESTAMP DEFAULT current_timestamp
 )"""
@@ -38,7 +35,6 @@ _JOBS_COLUMNS = """(
     title               VARCHAR,
     company             VARCHAR,
     location            VARCHAR,
-    job_type            VARCHAR,
     role_type           VARCHAR,
     description_raw     VARCHAR,
     description_clean   VARCHAR,
@@ -57,9 +53,7 @@ _JOBS_COLUMNS = """(
     seen                BOOLEAN DEFAULT false,
     is_repost           BOOLEAN DEFAULT false,
     original_job_id     VARCHAR,
-    date_scraped        TIMESTAMP DEFAULT current_timestamp,
-    applied_at          TIMESTAMP,
-    rejected_at         TIMESTAMP
+    date_scraped        TIMESTAMP DEFAULT current_timestamp
 )"""
 
 
@@ -75,11 +69,13 @@ def _migrate_scrape_runs_schema(conn: duckdb.DuckDBPyConnection) -> None:
     foreign key on (jobs.scrape_run_id references scrape_runs.run_id), even
     for unrelated columns — so an in-place ALTER TABLE isn't possible while
     jobs exists. Instead this backs up scrape_runs verbatim (preserving the
-    original email_subject/email_date values as a historical record),
-    rebuilds both tables from scratch inside one transaction, and copies the
-    data back across — jobs is rebuilt with an unchanged schema purely to
-    drop and re-add the FK, and every run_id/job_id is preserved so existing
-    jobs.scrape_run_id references keep resolving correctly.
+    original email_subject/email_date/role_type values as a historical
+    record), rebuilds both tables from scratch inside one transaction, and
+    copies the data back across by named column (both tables have since shed
+    a few vestigial columns — scrape_runs.role_type and jobs.job_type/
+    applied_at/rejected_at — that the old tmp copy still carries), so every
+    run_id/job_id is preserved and jobs.scrape_run_id references keep
+    resolving correctly.
 
     Runs once per database: skipped if scrape_runs doesn't exist yet (fresh
     install) or already has search_name instead of email_subject (already
@@ -107,14 +103,30 @@ def _migrate_scrape_runs_schema(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute("CREATE TABLE scrape_runs " + _SCRAPE_RUNS_COLUMNS)
         conn.execute("""
             INSERT INTO scrape_runs (run_id, search_name, linkedin_search_url,
-                                      role_type, jobs_found, run_at)
-            SELECT run_id, email_subject, linkedin_search_url, role_type,
-                   jobs_found, run_at
+                                      jobs_found, run_at)
+            SELECT run_id, email_subject, linkedin_search_url, jobs_found, run_at
             FROM scrape_runs_backup
         """)
         if has_jobs:
             conn.execute("CREATE TABLE jobs " + _JOBS_COLUMNS)
-            conn.execute("INSERT INTO jobs SELECT * FROM jobs_migration_tmp")
+            conn.execute("""
+                INSERT INTO jobs (
+                    job_id, scrape_run_id, title, company, location, role_type,
+                    description_raw, description_clean, description_summary,
+                    match_score, fit_score, criteria_score, dealbreakers,
+                    match_reason, linkedin_url, apply_url, apply_platform,
+                    salary_range, tags, status, seen, is_repost, original_job_id,
+                    date_scraped
+                )
+                SELECT
+                    job_id, scrape_run_id, title, company, location, role_type,
+                    description_raw, description_clean, description_summary,
+                    match_score, fit_score, criteria_score, dealbreakers,
+                    match_reason, linkedin_url, apply_url, apply_platform,
+                    salary_range, tags, status, seen, is_repost, original_job_id,
+                    date_scraped
+                FROM jobs_migration_tmp
+            """)
             conn.execute("DROP TABLE jobs_migration_tmp")
         conn.execute("COMMIT")
     except Exception:

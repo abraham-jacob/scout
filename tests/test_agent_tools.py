@@ -1,16 +1,13 @@
-"""Tests for agent/tools.py — database operations and tool dispatch."""
+"""Tests for agent/tools.py — database operations."""
 
-import json
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-import duckdb
 
 from agent.tools import (
     _unwrap_linkedin_redirect,
     create_scrape_run,
     get_existing_job_ids,
     save_jobs,
-    dispatch_tool,
 )
 
 
@@ -53,28 +50,12 @@ class TestCreateScrapeRun:
         run_id = create_scrape_run(
             search_name="Senior IC Bay Area",
             linkedin_url="https://linkedin.com/jobs",
-            role_type="manager"
         )
 
         assert run_id is not None
         assert len(run_id) == 36  # UUID length
         mock_conn.execute.assert_called_once()
         mock_conn.close.assert_called_once()
-
-    @patch('agent.tools.get_connection')
-    def test_create_scrape_run_with_no_role_type(self, mock_get_conn):
-        """Create scrape run with role_type=None (a run has no single role)."""
-        mock_conn = MagicMock()
-        mock_get_conn.return_value = mock_conn
-
-        run_id = create_scrape_run(
-            search_name="Senior IC Bay Area",
-            linkedin_url="https://linkedin.com/jobs",
-            role_type=None
-        )
-
-        assert run_id is not None
-        mock_conn.execute.assert_called_once()
 
 
 class TestGetExistingJobIds:
@@ -96,20 +77,6 @@ class TestGetExistingJobIds:
         assert job_ids == ["job1", "job2", "job3"]
         mock_conn.execute.assert_called_once()
         assert "dismissed" in mock_conn.execute.call_args[0][0]
-
-    @patch('agent.tools.get_connection')
-    def test_get_job_ids_by_role(self, mock_get_conn):
-        """Get job IDs filtered by role type."""
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = [("manager_job1",)]
-        mock_get_conn.return_value = mock_conn
-
-        job_ids = get_existing_job_ids(role_type="manager")
-
-        assert job_ids == ["manager_job1"]
-        mock_conn.execute.assert_called_once()
-        call_args = mock_conn.execute.call_args
-        assert "manager" in str(call_args)
 
     @patch('agent.tools.get_connection')
     def test_get_empty_job_ids(self, mock_get_conn):
@@ -284,39 +251,3 @@ class TestSaveJobs:
         # Verify the execute was called and the URL was unwrapped
         call_args = mock_conn.execute.call_args_list
         assert any("example.com" in str(call) for call in call_args)
-
-
-class TestDispatchTool:
-    """Test tool dispatch mechanism."""
-
-    @patch('agent.tools.save_jobs')
-    def test_dispatch_save_jobs(self, mock_save):
-        """Dispatch save_jobs tool."""
-        mock_save.return_value = {"saved": 1}
-
-        result = dispatch_tool("save_jobs", {
-            "scrape_run_id": "run_id",
-            "jobs": [{"job_id": "123", "title": "Engineer"}]
-        })
-
-        result_dict = json.loads(result)
-        assert result_dict["saved"] == 1
-        mock_save.assert_called_once()
-
-    @patch('agent.tools.get_existing_job_ids')
-    def test_dispatch_get_existing_job_ids(self, mock_get):
-        """Dispatch get_existing_job_ids tool."""
-        mock_get.return_value = ["job1", "job2"]
-
-        result = dispatch_tool("get_existing_job_ids", {"role_type": "manager"})
-
-        result_list = json.loads(result)
-        assert result_list == ["job1", "job2"]
-        mock_get.assert_called_once()
-
-    def test_dispatch_unknown_tool(self):
-        """Return error for unknown tool."""
-        result = dispatch_tool("unknown_tool", {})
-
-        result_dict = json.loads(result)
-        assert "error" in result_dict

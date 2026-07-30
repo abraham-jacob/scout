@@ -738,7 +738,7 @@ def _retry_api_failures(jobs: list[dict], results: list, is_failure,
     extra attempt, not a retry loop. A quiet no-op when nothing failed.
 
     Surfaces the retry pass in the run drawer's event log (``index`` ties the
-    lines to the right per-email group) so a run that recovered a stalled call
+    lines to the right search) so a run that recovered a stalled call
     reads honestly instead of looking like every job cleaned first try.
     """
     failed_idx = [i for i, r in enumerate(results) if is_failure(r)]
@@ -769,7 +769,7 @@ def clean_jobs(jobs: list[dict], index: int = 1) -> None:
     Runs the pool via submit()/as_completed() rather than pool.map() so a
     "N of M" progress event can be emitted as each call finishes, driving the
     run drawer's live count — ``index`` ties those events to the right
-    per-email group. Each event-log line also reports that job's own call
+    search. Each event-log line also reports that job's own call
     duration (via _timed_clean_one), so slow-vs-fast variance is visible
     without needing --log-model-calls (which only records the request, not
     timing or the response).
@@ -1231,7 +1231,7 @@ def enrich_jobs(jobs: list[dict], index: int = 1) -> None:
     Runs the pool via submit()/as_completed() rather than pool.map() so a
     "N of M" progress event and a per-job outcome log line can be emitted as
     each call finishes, driving the run drawer's live count and event log —
-    ``index`` ties those events to the right per-email group.
+    ``index`` ties those events to the right search.
     """
     print(f"Enriching {len(jobs)} jobs (parallel calls, "
           f"scoring {'on' if scoring_enabled() else 'off'})...", flush=True)
@@ -1364,8 +1364,8 @@ def run_scrape(url: str, scrape_run_id: str, index: int = 1,
               job_id: str | None = None) -> list[dict]:
     """Scrape → deterministic filter → enrich → keep only configured role types.
 
-    ``index`` is the 1-based position of this email in the run, used to route
-    progress events to the right per-email group in the UI drawer. When
+    ``index`` is the 1-based position of this search in the run, used to route
+    progress events to the right search group in the UI drawer. When
     ``job_id`` is set, ``url`` is a single LinkedIn job-view URL and Pass 1
     fetches just that one job (scrape_single_prompt.md) instead of scraping a
     search-results page (scrape_prompt.md); everything downstream (filters,
@@ -1477,12 +1477,11 @@ def process_url(
     url: str,
     search_name: str = "Manual run",
     index: int = 1,
-    total: int = 1,
     job_id: str | None = None,
 ) -> bool:
     """Create a scrape run, scrape + enrich + filter, and save results.
 
-    ``index``/``total`` position this search within the run for UI progress.
+    ``index`` positions this search within the run for UI progress.
     ``job_id`` routes the scrape to the single-job Pass 1 variant (see
     run_scrape); when set and ``search_name`` was left at its default, the
     scrape run is labeled "Single job scan" instead of "Manual run".
@@ -1493,11 +1492,7 @@ def process_url(
     if job_id and search_name == "Manual run":
         search_name = "Single job scan"
 
-    run_id = create_scrape_run(
-        search_name=search_name,
-        linkedin_url=url,
-        role_type=None,  # a run no longer has a single role; role is per-job
-    )
+    run_id = create_scrape_run(search_name=search_name, linkedin_url=url)
     print(f"Run  : {run_id}")
 
     try:
@@ -1579,18 +1574,16 @@ def main() -> None:
     if args.url:
         url = resolve_scan_url(args.url)
         job_id = extract_single_job_id(url)
-        process_url(url=url, index=1, total=1, job_id=job_id)
+        process_url(url=url, index=1, job_id=job_id)
         log.info("Run finished (1 URL)")
-        emit(scope="run", status="done")
         return
 
     searches = config.linkedin_searches
     for i, search in enumerate(searches, 1):
         emit_log(f"Search {i}/{len(searches)}: {search.name}", level="head", index=i)
-        process_url(url=search.url, search_name=search.name, index=i, total=len(searches))
+        process_url(url=search.url, search_name=search.name, index=i)
 
     log.info("Run finished (%d search%s)", len(searches), "es" if len(searches) != 1 else "")
-    emit(scope="run", status="done")
 
 
 if __name__ == "__main__":
