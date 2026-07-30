@@ -492,7 +492,7 @@ def _run_api_llm(config, pass_name: str, model: str, system_prompt: str,
 
     Retries up to API_STREAM_RETRIES times, API_STREAM_RETRY_DELAY_S apart,
     on a connection error or a stream stall — this composes with
-    _retry_api_failures' own single batch-level retry pass, so a call can
+    _retry_failures' own single batch-level retry pass, so a call can
     exhaust its retries here and still get one more shot there. Returns the
     assistant message text, or None if every attempt fails so the caller
     falls back gracefully. _extract_json still tolerates stray prose if the
@@ -749,22 +749,32 @@ def _timed_clean_one(job: dict) -> tuple[dict | None, float]:
     return result, time.monotonic() - t0
 
 
-def _retry_api_failures(jobs: list[dict], results: list, is_failure,
-                        one_fn, max_workers: int, label: str,
-                        index: int = 1) -> None:
+# Delay before firing a batch's one retry pass, keyed by backend (see
+# _retry_failures). 0 on api preserves that backend's original behavior
+# unchanged — its failures are usually already-transient stream stalls, so
+# an immediate retry is fine. 5s on claude gives a rate-limited or otherwise
+# hiccuping call room to clear, since a claude subprocess failure (timeout,
+# malformed response) is more often a hard failure than the api backend's
+# flakiness, so retrying instantly is less likely to help.
+API_RETRY_DELAY_S = 0
+CLAUDE_RETRY_DELAY_S = 5
+
+
+def _retry_failures(jobs: list[dict], results: list, is_failure,
+                    one_fn, max_workers: int, label: str,
+                    retry_delay: float, index: int = 1) -> None:
     """Retry once, in place, the subset of `results` that `is_failure` flags.
 
-    Api-only: the api backend is the flaky one (occasional generation
-    stalls/timeouts on the endpoint — observed and documented during
-    tuning, not a Claude API issue), so this is called only when
-    config.llm_backend == "api". Re-runs `one_fn` on just the failed jobs'
+    Shared by clean_jobs and enrich_jobs, on both backends. Waits
+    `retry_delay` seconds (see API_RETRY_DELAY_S/CLAUDE_RETRY_DELAY_S) before
+    firing the retry pool, then re-runs `one_fn` on just the failed jobs'
     subset (parallel, same max_workers) and overwrites their slot in `results`
     with whatever the retry returns — success or a repeat failure, exactly one
     extra attempt, not a retry loop. A quiet no-op when nothing failed.
 
     Surfaces the retry pass in the run drawer's event log (``index`` ties the
     lines to the right search) so a run that recovered a stalled call
-    reads honestly instead of looking like every job cleaned first try.
+    reads honestly instead of looking like every job succeeded first try.
     """
     failed_idx = [i for i, r in enumerate(results) if is_failure(r)]
     if not failed_idx:
@@ -772,6 +782,8 @@ def _retry_api_failures(jobs: list[dict], results: list, is_failure,
     print(f"  retrying {len(failed_idx)} failed {label} call(s)...", flush=True)
     emit_log(f"Retrying {len(failed_idx)} failed {label} call(s)…",
              level="head", index=index)
+    if retry_delay:
+        time.sleep(retry_delay)
     retry_jobs = [jobs[i] for i in failed_idx]
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         retry_results = list(pool.map(one_fn, retry_jobs))
@@ -782,14 +794,24 @@ def _retry_api_failures(jobs: list[dict], results: list, is_failure,
              level="good" if recovered == len(failed_idx) else "warn", index=index)
 
 
+def _emit_progress(index: int, done: int, total: int, step_key: StepKey) -> None:
+    """Emit the "N of M" live-count event for one completed clean/enrich call.
+
+    Shared by clean_jobs and enrich_jobs — step_key picks which run-drawer
+    step (StepKey.CLEAN or StepKey.ENRICH) the event updates.
+    """
+    emit(scope="search", index=index, key=step_key, status="active",
+         stat=f"{done} of {total}")
+
+
 def clean_jobs(jobs: list[dict], index: int = 1) -> None:
     """Clean descriptions in-place (parallel Haiku calls).
 
-    Sets description_clean on each job. On the api backend, a job whose
-    clean_one call fails gets one retry pass (_retry_api_failures) before
-    falling back — the endpoint's occasional stalls are usually transient,
-    so a second attempt often succeeds. Still falls back to description_raw if
-    the retry also fails, so enrichment always has something to work with.
+    Sets description_clean on each job. Every job whose clean_one call fails
+    gets one retry pass (_retry_failures) before falling back — the retry
+    often recovers a transient failure, but still falls back to
+    description_raw if it also fails, so enrichment always has something to
+    work with.
 
     Runs the pool via submit()/as_completed() rather than pool.map() so a
     "N of M" progress event can be emitted as each call finishes, driving the
@@ -798,31 +820,58 @@ def clean_jobs(jobs: list[dict], index: int = 1) -> None:
     duration (via _timed_clean_one), so slow-vs-fast variance is visible
     without needing --log-model-calls (which only records the request, not
     timing or the response).
+
+    On the claude backend, warms the Anthropic prompt cache with one serial
+    call before the parallel wave — see enrich_jobs's docstring for why;
+    unified here so both passes behave identically regardless of how large
+    each one's system prompt is. The api backend has no such cache, so it
+    skips straight to the full-batch pool.
     """
     print(f"Cleaning {len(jobs)} descriptions (parallel calls)...", flush=True)
     emit_log(f"Cleaning {len(jobs)} descriptions…", level="head", index=index)
     t0 = time.monotonic()
     config = load_config()
+    max_workers = config.max_workers
     results: list[dict | None] = [None] * len(jobs)
     done = 0
-    with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
-        futures = {pool.submit(_timed_clean_one, job): i for i, job in enumerate(jobs)}
-        for future in as_completed(futures):
-            i = futures[future]
-            results[i], call_elapsed = future.result()
-            done += 1
-            emit(scope="search", index=index, key=StepKey.CLEAN, status="active",
-                 stat=f"{done} of {len(jobs)}")
-            label = f"{jobs[i].get('title') or '?'} @ {jobs[i].get('company') or '?'}"
-            if results[i] is None:
-                emit_log(f"clean failed · {label} ({done}/{len(jobs)}) · {call_elapsed:.0f}s",
-                         level="warn", index=index)
-            else:
-                emit_log(f"✓ cleaned {label} ({done}/{len(jobs)}) · {call_elapsed:.0f}s",
-                         level="info", index=index)
+
+    def _apply_result(i: int, result: dict | None, call_elapsed: float) -> None:
+        nonlocal done
+        results[i] = result
+        done += 1
+        _emit_progress(index, done, len(jobs), StepKey.CLEAN)
+        label = f"{jobs[i].get('title') or '?'} @ {jobs[i].get('company') or '?'}"
+        if result is None:
+            emit_log(f"clean failed · {label} ({done}/{len(jobs)}) · {call_elapsed:.0f}s",
+                     level="warn", index=index)
+        else:
+            emit_log(f"✓ cleaned {label} ({done}/{len(jobs)}) · {call_elapsed:.0f}s",
+                     level="info", index=index)
+
     if config.llm_backend == "api":
-        _retry_api_failures(jobs, results, lambda r: r is None, clean_one,
-                            config.max_workers, "clean", index)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_timed_clean_one, job): i for i, job in enumerate(jobs)}
+            for future in as_completed(futures):
+                i = futures[future]
+                result, call_elapsed = future.result()
+                _apply_result(i, result, call_elapsed)
+    else:
+        result, call_elapsed = _timed_clean_one(jobs[0])
+        _apply_result(0, result, call_elapsed)
+        if len(jobs) > 1:
+            time.sleep(2)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_timed_clean_one, job): i
+                           for i, job in enumerate(jobs[1:], start=1)}
+                for future in as_completed(futures):
+                    i = futures[future]
+                    result, call_elapsed = future.result()
+                    _apply_result(i, result, call_elapsed)
+
+    retry_delay = API_RETRY_DELAY_S if config.llm_backend == "api" else CLAUDE_RETRY_DELAY_S
+    _retry_failures(jobs, results, lambda r: r is None, clean_one,
+                    max_workers, "clean", retry_delay, index)
+
     for job, result in zip(jobs, results):
         job["description_clean"] = (
             (result or {}).get("description_clean") or job.get("description_raw") or ""
@@ -1211,46 +1260,58 @@ def enrich_one(job: dict) -> dict:
     }
 
 
-def _emit_enrich_progress(index: int, done: int, total: int) -> None:
-    """Emit the "N of M" live-count event for one completed enrich_one call."""
-    emit(scope="search", index=index, key=StepKey.ENRICH, status="active",
-         stat=f"{done} of {total}")
+def _timed_enrich_one(job: dict) -> tuple[dict, float]:
+    """Run enrich_one, timing only its own execution (not queue-wait behind
+    other jobs in the pool) — mirrors _timed_clean_one so both passes report
+    an honest per-call duration in the run drawer's event log.
+    """
+    t0 = time.monotonic()
+    result = enrich_one(job)
+    return result, time.monotonic() - t0
 
 
-def _log_enrich_outcome(job: dict, res: dict, index: int) -> None:
+def _log_enrich_outcome(job: dict, res: dict, call_elapsed: float, index: int) -> None:
     """Emit one event-log line describing a single job's enrichment outcome.
 
     Distinguishes the three outcomes honestly: a scored keep, a genuine "Other"
     drop, and an outright call failure (res == _ENRICH_FAILURE) — the last logs
-    as a warning rather than masquerading as an "Other" classification, since on
-    the api backend it may still be recovered by the retry pass.
+    as a warning rather than masquerading as an "Other" classification, since it
+    may still be recovered by the retry pass. Reports the call's own duration,
+    same as clean's per-job log lines.
     """
     label = f"{job.get('title') or '?'} @ {job.get('company') or '?'}"
     if res == _ENRICH_FAILURE:
-        emit_log(f"enrich failed · {label}", level="warn", index=index)
+        emit_log(f"enrich failed · {label} · {call_elapsed:.0f}s", level="warn", index=index)
         return
     role_type = res.get("role_type")
     if role_type and role_type != "Other":
         score = res.get("match_score")
         score_txt = f" — {score}/100" if score is not None else ""
-        emit_log(f"✓ {label}{score_txt}", level="good", index=index)
+        emit_log(f"✓ {label}{score_txt} · {call_elapsed:.0f}s", level="good", index=index)
     else:
-        emit_log(f"✗ {label} — dropped (Other)", level="drop", index=index)
+        emit_log(f"✗ {label} — dropped (Other) · {call_elapsed:.0f}s", level="drop", index=index)
 
 
 def enrich_jobs(jobs: list[dict], index: int = 1) -> None:
     """Enrich each job in-place with role_type, summary, tags, and match scores.
 
-    One headless Sonnet call per job, run in parallel. On the api backend, a
-    job whose enrich_one call fails outright gets one retry pass
-    (_retry_api_failures) before its result is applied — the endpoint's
-    occasional stalls are usually transient, so a second attempt often
-    succeeds instead of the job being dropped for nothing.
+    One headless Sonnet call per job, run in parallel. Every job whose
+    enrich_one call fails outright gets one retry pass (_retry_failures)
+    before its result is applied.
 
     Runs the pool via submit()/as_completed() rather than pool.map() so a
-    "N of M" progress event and a per-job outcome log line can be emitted as
-    each call finishes, driving the run drawer's live count and event log —
-    ``index`` ties those events to the right search.
+    "N of M" progress event and a per-job outcome log line (with call
+    duration, via _timed_enrich_one) can be emitted as each call finishes,
+    driving the run drawer's live count and event log — ``index`` ties those
+    events to the right search.
+
+    On the claude backend, warms the Anthropic prompt cache with one serial
+    call before the parallel wave: parallel calls that start simultaneously
+    would all miss the cache and each pay the cache WRITE for the large
+    shared system prompt (resume + profiles). The sleep gives the cache
+    write time to propagate so the parallel batch reads instead of
+    re-writing. The api backend has no such cache, so it skips straight to
+    the full-batch pool.
     """
     print(f"Enriching {len(jobs)} jobs (parallel calls, "
           f"scoring {'on' if scoring_enabled() else 'off'})...", flush=True)
@@ -1260,42 +1321,38 @@ def enrich_jobs(jobs: list[dict], index: int = 1) -> None:
     max_workers = config.max_workers
     results: list[dict] = [None] * len(jobs)
     done = 0
+
+    def _apply_result(i: int, result: dict, call_elapsed: float) -> None:
+        nonlocal done
+        results[i] = result
+        done += 1
+        _emit_progress(index, done, len(jobs), StepKey.ENRICH)
+        _log_enrich_outcome(jobs[i], result, call_elapsed, index)
+
     if config.llm_backend == "api":
-        # The api backend has no Anthropic prompt cache to warm, so the
-        # serial-first-call + sleep below would just add latency. Run the whole
-        # batch straight through the pool.
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(enrich_one, job): i for i, job in enumerate(jobs)}
+            futures = {pool.submit(_timed_enrich_one, job): i for i, job in enumerate(jobs)}
             for future in as_completed(futures):
                 i = futures[future]
-                results[i] = future.result()
-                done += 1
-                _emit_enrich_progress(index, done, len(jobs))
-                _log_enrich_outcome(jobs[i], results[i], index)
-        _retry_api_failures(jobs, results, lambda r: r == _ENRICH_FAILURE,
-                            enrich_one, max_workers, "enrich", index)
+                result, call_elapsed = future.result()
+                _apply_result(i, result, call_elapsed)
     else:
-        # Warm the Anthropic prompt cache with one serial call, then pause
-        # briefly before firing the parallel wave. Parallel calls that start
-        # simultaneously all miss the cache and each pays the cache WRITE for the
-        # large shared system prompt (resume + profiles). The sleep gives the
-        # cache write time to propagate so the parallel batch reads instead of
-        # re-writing.
-        results[0] = enrich_one(jobs[0])
-        done += 1
-        _emit_enrich_progress(index, done, len(jobs))
-        _log_enrich_outcome(jobs[0], results[0], index)
+        result, call_elapsed = _timed_enrich_one(jobs[0])
+        _apply_result(0, result, call_elapsed)
         if len(jobs) > 1:
             time.sleep(2)
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(enrich_one, job): i
+                futures = {pool.submit(_timed_enrich_one, job): i
                            for i, job in enumerate(jobs[1:], start=1)}
                 for future in as_completed(futures):
                     i = futures[future]
-                    results[i] = future.result()
-                    done += 1
-                    _emit_enrich_progress(index, done, len(jobs))
-                    _log_enrich_outcome(jobs[i], results[i], index)
+                    result, call_elapsed = future.result()
+                    _apply_result(i, result, call_elapsed)
+
+    retry_delay = API_RETRY_DELAY_S if config.llm_backend == "api" else CLAUDE_RETRY_DELAY_S
+    _retry_failures(jobs, results, lambda r: r == _ENRICH_FAILURE, enrich_one,
+                    max_workers, "enrich", retry_delay, index)
+
     for job, res in zip(jobs, results):
         job["role_type"] = res.get("role_type")
         job["description_summary"] = res.get("description_summary")

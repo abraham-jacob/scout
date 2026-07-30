@@ -133,12 +133,11 @@ in sync with `GLOBAL_STEPS` / `SEARCH_STEPS` in `app/main.py`.
 ### Data layer
 `app/database.py` — DuckDB at `data/scout.duckdb`, two tables (`scrape_runs`, `jobs`).
 `role_type` is per-job (derived from the title/description at enrichment), not per-run.
-`scrape_runs` predates the `[[linkedin_searches]]` redesign with Gmail-derived
-`email_subject`/`email_date` columns; `_migrate_scrape_runs_schema()` (run once,
-on `init_db()`) rebuilds the table to replace them with a single `search_name`
-column (the configured search's `name` alias) — `email_date` has no
-replacement, since a config-driven search has no natural date source. The
-original values are preserved verbatim in a `scrape_runs_backup` table.
+`scrape_runs.search_name` holds the configured search's `name` alias (from the
+`[[linkedin_searches]]` redesign, which replaced the earlier Gmail-derived
+`email_subject`/`email_date` columns — the one-time migration off that schema,
+`_migrate_scrape_runs_schema()`, was retired once no pre-migration databases
+remained).
 
 ### `agent/tools.py`
 Plain Python DB helpers (`create_scrape_run`, `get_existing_job_ids`, `save_jobs`,

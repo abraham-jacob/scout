@@ -895,7 +895,12 @@ class TestEnrichJobsWarmup:
         assert slept == []
 
     def test_claude_backend_sleeps_once_for_warmup(self, monkeypatch):
-        """On Claude with >1 job, enrich_jobs warms the cache with one sleep."""
+        """On Claude with >1 job, enrich_jobs warms the cache with one sleep.
+
+        Both jobs fail here (enrich_one always returns _ENRICH_FAILURE), so
+        the retry pass's own CLAUDE_RETRY_DELAY_S sleep also fires — the
+        warmup sleep is the first of the two.
+        """
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
         monkeypatch.setattr(runner, "scoring_enabled", lambda: False)
         monkeypatch.setattr(runner, "enrich_one",
@@ -904,7 +909,7 @@ class TestEnrichJobsWarmup:
         monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
 
         runner.enrich_jobs([{"job_id": "1"}, {"job_id": "2"}])
-        assert slept == [2]
+        assert slept == [2, runner.CLAUDE_RETRY_DELAY_S]
 
 
 class TestCleanOne:
@@ -1003,8 +1008,8 @@ class TestWarmUpCleanPass:
         assert slept == [runner.WARMUP_CLEAN_RETRY_DELAY_S, runner.WARMUP_CLEAN_RETRY_DELAY_S]
 
 
-class TestRetryApiFailures:
-    """Unit tests for the shared api-only one-shot retry helper."""
+class TestRetryFailures:
+    """Unit tests for the shared one-shot retry helper (both backends)."""
 
     def test_noop_when_nothing_failed(self):
         """No failures in results means the retry fn is never called."""
@@ -1016,8 +1021,8 @@ class TestRetryApiFailures:
 
         jobs = [{"id": 1}, {"id": 2}]
         results = ["ok1", "ok2"]
-        runner._retry_api_failures(jobs, results, lambda r: r is None,
-                                     one_fn, 2, "test")
+        runner._retry_failures(jobs, results, lambda r: r is None,
+                                one_fn, 2, "test", 0)
         assert calls == []
         assert results == ["ok1", "ok2"]
 
@@ -1025,22 +1030,33 @@ class TestRetryApiFailures:
         """Only the jobs whose result trips is_failure get re-run."""
         jobs = [{"id": 1}, {"id": 2}, {"id": 3}]
         results = ["ok", None, None]
-        runner._retry_api_failures(
+        runner._retry_failures(
             jobs, results, lambda r: r is None,
-            lambda job: f"retried-{job['id']}", 2, "test")
+            lambda job: f"retried-{job['id']}", 2, "test", 0)
         assert results == ["ok", "retried-2", "retried-3"]
 
     def test_repeat_failure_on_retry_is_kept(self):
         """A retry that fails again leaves the failure value in place."""
         jobs = [{"id": 1}]
         results = [None]
-        runner._retry_api_failures(jobs, results, lambda r: r is None,
-                                     lambda job: None, 2, "test")
+        runner._retry_failures(jobs, results, lambda r: r is None,
+                                lambda job: None, 2, "test", 0)
         assert results == [None]
+
+    def test_waits_retry_delay_before_retrying(self, monkeypatch):
+        """A nonzero retry_delay sleeps before the retry pool fires."""
+        slept = []
+        monkeypatch.setattr(runner.time, "sleep", lambda s: slept.append(s))
+        jobs = [{"id": 1}]
+        results = [None]
+        runner._retry_failures(jobs, results, lambda r: r is None,
+                                lambda job: "recovered", 2, "test", 5)
+        assert slept == [5]
+        assert results == ["recovered"]
 
 
 class TestCleanJobsRetry:
-    """Test the api-only one-shot retry for Pass 2 clean failures."""
+    """Test the shared one-shot retry for Pass 2 clean failures, both backends."""
 
     def test_api_backend_retries_failed_clean_once(self, monkeypatch):
         """A clean_one failure gets exactly one retry, and success sticks."""
@@ -1075,28 +1091,29 @@ class TestCleanJobsRetry:
         runner.clean_jobs(jobs)
         assert jobs[0]["description_clean"] == "raw text"
 
-    def test_claude_backend_never_retries_clean(self, monkeypatch):
-        """On Claude, a clean_one failure is not retried — falls back immediately."""
+    def test_claude_backend_retries_failed_clean_once(self, monkeypatch):
+        """On Claude too, a clean_one failure gets exactly one retry."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
+        monkeypatch.setattr(runner.time, "sleep", lambda s: None)
         calls = {"n": 0}
 
         def fake_clean_one(job):
             calls["n"] += 1
-            return None
+            return None if calls["n"] == 1 else {"description_clean": "recovered"}
 
         monkeypatch.setattr(runner, "clean_one", fake_clean_one)
         jobs = [{"job_id": "1", "description_raw": "raw text"}]
 
         runner.clean_jobs(jobs)
-        assert jobs[0]["description_clean"] == "raw text"
-        assert calls["n"] == 1
+        assert jobs[0]["description_clean"] == "recovered"
+        assert calls["n"] == 2
 
     def test_event_log_reports_per_call_duration(self, capsys, monkeypatch):
         """Each clean event-log line reports that job's own call duration."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
+        monkeypatch.setattr(runner.time, "sleep", lambda s: None)
 
         def slow_clean_one(job):
-            time.sleep(0.05)
             return {"description_clean": "ok"} if job["job_id"] == "ok" else None
 
         monkeypatch.setattr(runner, "clean_one", slow_clean_one)
@@ -1115,7 +1132,7 @@ class TestCleanJobsRetry:
 
 
 class TestEnrichJobsRetry:
-    """Test the api-only one-shot retry for Pass 3 enrich failures."""
+    """Test the shared one-shot retry for Pass 3 enrich failures, both backends."""
 
     def test_api_backend_retries_failed_enrich_once(self, monkeypatch):
         """An enrich_one failure gets exactly one retry, and success sticks."""
@@ -1156,8 +1173,8 @@ class TestEnrichJobsRetry:
         runner.enrich_jobs(jobs)
         assert jobs[0]["role_type"] is None
 
-    def test_claude_backend_never_retries_enrich(self, monkeypatch):
-        """On Claude, an enrich_one failure is not retried."""
+    def test_claude_backend_retries_failed_enrich_once(self, monkeypatch):
+        """On Claude too, an enrich_one failure gets exactly one retry."""
         monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
         monkeypatch.setattr(runner, "scoring_enabled", lambda: False)
         monkeypatch.setattr(runner.time, "sleep", lambda s: None)
@@ -1171,7 +1188,10 @@ class TestEnrichJobsRetry:
         jobs = [{"job_id": "1"}, {"job_id": "2"}]
 
         runner.enrich_jobs(jobs)
-        assert calls["n"] == 2
+        # 2 initial calls (serial-first + parallel) + 2 retries (both failed).
+        assert calls["n"] == 4
+        assert jobs[0]["role_type"] is None
+        assert jobs[1]["role_type"] is None
 
 
 class TestMainSearchLoop:
