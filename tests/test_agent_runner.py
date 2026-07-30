@@ -585,7 +585,7 @@ class TestProcessUrlSingleJob:
         monkeypatch.setattr(runner, "save_jobs", lambda *a, **k: {"saved": 0, "reposts_detected": 0})
 
         runner.process_url(url="https://www.linkedin.com/jobs/view/999/",
-                           index=1, total=1, job_id="999")
+                           index=1, job_id="999")
 
         assert run_scrape_calls["job_id"] == "999"
 
@@ -599,7 +599,7 @@ class TestProcessUrlSingleJob:
         monkeypatch.setattr(runner, "save_jobs", lambda *a, **k: {"saved": 0, "reposts_detected": 0})
 
         runner.process_url(url="https://www.linkedin.com/jobs/view/999/",
-                           search_name="Custom label", index=1, total=1, job_id="999")
+                           search_name="Custom label", index=1, job_id="999")
 
         assert names["name"] == "Custom label"
 
@@ -1205,20 +1205,17 @@ class TestMainSearchLoop:
         assert calls[0]["url"] == "https://www.linkedin.com/jobs/a"
         assert calls[0]["search_name"] == "First"
         assert calls[0]["index"] == 1
-        assert calls[0]["total"] == 2
         assert calls[1]["url"] == "https://www.linkedin.com/jobs/b"
         assert calls[1]["search_name"] == "Second"
         assert calls[1]["index"] == 2
-        assert calls[1]["total"] == 2
 
     def test_single_entry_config_loops_correctly(self, monkeypatch):
-        """A single configured search still gets index=1/total=1 (off-by-one guard)."""
+        """A single configured search still gets index=1 (off-by-one guard)."""
         searches = [types.SimpleNamespace(name="Only", url="https://www.linkedin.com/jobs/x")]
         calls = self._run_main(monkeypatch, searches)
 
         assert len(calls) == 1
         assert calls[0]["index"] == 1
-        assert calls[0]["total"] == 1
 
     def _run_main_with_url(self, monkeypatch, url):
         """Run main() with --url, stubbing setup/IO and recording process_url's call."""

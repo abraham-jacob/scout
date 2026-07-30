@@ -133,16 +133,16 @@ in sync with `GLOBAL_STEPS` / `SEARCH_STEPS` in `app/main.py`.
 ### Data layer
 `app/database.py` — DuckDB at `data/scout.duckdb`, two tables (`scrape_runs`, `jobs`).
 `role_type` is per-job (derived from the title/description at enrichment), not per-run.
-`scrape_runs.email_subject`/`email_date` predate the `[[linkedin_searches]]`
-redesign and have no migration path (`init_db()` only does `CREATE TABLE IF
-NOT EXISTS`); `create_scrape_run()`'s callers now repurpose them to carry the
-search's `name` alias and an empty date rather than an actual email subject/date.
+`scrape_runs` predates the `[[linkedin_searches]]` redesign with Gmail-derived
+`email_subject`/`email_date` columns; `_migrate_scrape_runs_schema()` (run once,
+on `init_db()`) rebuilds the table to replace them with a single `search_name`
+column (the configured search's `name` alias) — `email_date` has no
+replacement, since a config-driven search has no natural date source. The
+original values are preserved verbatim in a `scrape_runs_backup` table.
 
-### `agent/tools.py` dual role
-It holds both the plain Python DB helpers `runner.py` calls directly AND
-`TOOL_DEFINITIONS` / `dispatch_tool` (Anthropic tool schemas for an agent to call
-`save_jobs` mid-run). The current pipeline calls the Python helpers directly; the
-tool-definition path is available but not on the main flow.
+### `agent/tools.py`
+Plain Python DB helpers (`create_scrape_run`, `get_existing_job_ids`, `save_jobs`,
+etc.) called directly by `runner.py`.
 
 ## Conventions
 

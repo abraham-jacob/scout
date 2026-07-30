@@ -293,7 +293,7 @@ def _fetch_jobs(
         f"""
         SELECT j.job_id, j.title, j.company, j.location,
                j.linkedin_url, j.apply_url, j.apply_platform,
-               j.salary_range, j.status, j.seen, j.is_repost,
+               j.salary_range, j.status, j.seen, j.is_repost, j.original_job_id,
                j.description_raw, j.description_summary, j.date_scraped, j.role_type,
                j.tags, j.match_score, j.match_reason, j.dealbreakers
         FROM jobs j
@@ -307,7 +307,8 @@ def _fetch_jobs(
     cols = [
         "job_id", "title", "company", "location", "linkedin_url",
         "apply_url", "apply_platform", "salary_range", "status",
-        "seen", "is_repost", "description_raw", "description_summary", "date_scraped", "role_type",
+        "seen", "is_repost", "original_job_id",
+        "description_raw", "description_summary", "date_scraped", "role_type",
         "tags", "match_score", "match_reason", "dealbreakers",
     ]
     return [dict(zip(cols, row)) for row in rows]

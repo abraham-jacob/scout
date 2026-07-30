@@ -43,10 +43,10 @@ class TestFetchJobs:
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = [
             ("job1", "Engineer", "TechCorp", "Springfield", "https://linkedin.com/jobs/view/job1",
-             "https://apply.com", "easy_apply", "$150k", "new", False, False, "Raw desc",
+             "https://apply.com", "easy_apply", "$150k", "new", False, False, None, "Raw desc",
              "Summary", "2026-01-01", "IC"),
             ("job2", "Manager", "StartupCo", "NYC", "https://linkedin.com/jobs/view/job2",
-             "https://apply.com", "greenhouse", "$200k", "applied", True, False, "Raw desc",
+             "https://apply.com", "greenhouse", "$200k", "applied", True, False, None, "Raw desc",
              "Summary", "2026-01-01", "Manager"),
         ]
         mock_get_conn.return_value = mock_conn
@@ -64,7 +64,7 @@ class TestFetchJobs:
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = [
             ("job1", "Manager", "Corp", "Springfield", "url", "apply", "easy_apply", None, "new",
-             False, False, "desc", "summary", "2026-01-01", "Manager"),
+             False, False, None, "desc", "summary", "2026-01-01", "Manager"),
         ]
         mock_get_conn.return_value = mock_conn
 
@@ -82,7 +82,7 @@ class TestFetchJobs:
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = [
             ("job1", "Engineer", "Corp", "Springfield", "url", "apply", "easy_apply", None, "applied",
-             True, False, "desc", "summary", "2026-01-01", "IC"),
+             True, False, None, "desc", "summary", "2026-01-01", "IC"),
         ]
         mock_get_conn.return_value = mock_conn
 
@@ -97,7 +97,7 @@ class TestFetchJobs:
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = [
             ("job1", "Engineer", "Corp", "Springfield", "url", "apply", "easy_apply", None, "new",
-             False, False, "desc", "summary", "2026-01-01", "IC"),
+             False, False, None, "desc", "summary", "2026-01-01", "IC"),
         ]
         mock_get_conn.return_value = mock_conn
 
