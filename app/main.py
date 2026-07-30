@@ -128,6 +128,22 @@ def _search_group(index: int, total: int = 1, name: str = "") -> dict:
     }
 
 
+def _elapsed_seconds(start: datetime, end: datetime) -> int:
+    """Whole seconds between two aware datetimes, floored."""
+    return int((end - start).total_seconds())
+
+
+def _freeze_step_elapsed(step: dict, now: datetime) -> None:
+    """Permanently store a step's elapsed time the first time it stops being active.
+
+    No-ops if the step never started or already has a frozen ``elapsed`` —
+    safe to call from every status-transition path (_update_step,
+    _mark_active_as_error) without double-computing.
+    """
+    if step.get("started_at") and step.get("elapsed") is None:
+        step["elapsed"] = _elapsed_seconds(step["started_at"], now)
+
+
 def _update_step(step: dict, ev: dict) -> None:
     """Apply an event's status/stat to a single step in place.
 
@@ -140,8 +156,8 @@ def _update_step(step: dict, ev: dict) -> None:
     if status:
         if status == "active" and step["status"] != "active":
             step["started_at"] = datetime.now(timezone.utc)
-        elif status != "active" and step.get("started_at") and step.get("elapsed") is None:
-            step["elapsed"] = int((datetime.now(timezone.utc) - step["started_at"]).total_seconds())
+        elif status != "active":
+            _freeze_step_elapsed(step, datetime.now(timezone.utc))
         step["status"] = status
     if "stat" in ev:
         step["stat"] = ev["stat"]
@@ -156,7 +172,7 @@ def _apply_event(ev: dict) -> None:
     elif scope == "log":
         elapsed = 0
         if _run["started_at"]:
-            elapsed = int((datetime.now(timezone.utc) - _run["started_at"]).total_seconds())
+            elapsed = _elapsed_seconds(_run["started_at"], datetime.now(timezone.utc))
         _run["log"].append({
             "ts": elapsed,
             "level": ev.get("level", "info"),
@@ -187,8 +203,7 @@ def _mark_active_as_error(msg: str) -> None:
     """
     def _fail(step: dict) -> None:
         step["status"], step["stat"] = "error", msg
-        if step.get("started_at") and step.get("elapsed") is None:
-            step["elapsed"] = int((datetime.now(timezone.utc) - step["started_at"]).total_seconds())
+        _freeze_step_elapsed(step, datetime.now(timezone.utc))
 
     for step in _run["global_steps"]:
         if step["status"] == "active":
@@ -446,13 +461,13 @@ def _finalize_snapshot(snapshot: dict, now: datetime) -> None:
     """
     if snapshot["started_at"]:
         end = snapshot["finished_at"] or now
-        snapshot["run_elapsed"] = int((end - snapshot["started_at"]).total_seconds())
+        snapshot["run_elapsed"] = _elapsed_seconds(snapshot["started_at"], end)
     else:
         snapshot["run_elapsed"] = 0
 
     def _finalize_step(step: dict) -> None:
         if step["status"] == "active" and step.get("started_at"):
-            step["elapsed"] = int((now - step["started_at"]).total_seconds())
+            step["elapsed"] = _elapsed_seconds(step["started_at"], now)
 
     for step in snapshot["global_steps"]:
         _finalize_step(step)
