@@ -57,14 +57,15 @@ def get_existing_job_ids() -> list[str]:
 
 def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
     """
-    Persist a list of enriched jobs. Skips excluded companies (config
-    [filters] exclude_companies), detects reposts, and persists each job's
-    role_type, description_summary, and tags (produced by the per-job
-    enrichment step in runner.py). Returns a summary of what was saved vs
-    skipped.
+    Persist a list of enriched jobs. Assumes the caller (apply_deterministic_filters,
+    via one earlier get_existing_job_ids() fetch) already dropped jobs already in
+    the DB. Skips excluded companies (config [filters] exclude_companies),
+    detects reposts, and persists each job's role_type, description_summary,
+    and tags (produced by the per-job enrichment step in runner.py). Returns
+    a summary of what was saved vs skipped.
     """
     excluded = {c.lower() for c in load_config().exclude_companies}
-    saved, skipped_existing, skipped_excluded, reposts = 0, 0, 0, 0
+    saved, skipped_excluded, reposts = 0, 0, 0
     conn = get_connection()
 
     for job in jobs:
@@ -76,14 +77,6 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
             continue
 
         job_id = job["job_id"]
-
-        # Check if already in DB
-        exists = conn.execute(
-            "SELECT 1 FROM jobs WHERE job_id = ?", [job_id]
-        ).fetchone()
-        if exists:
-            skipped_existing += 1
-            continue
 
         # Unwrap LinkedIn safety redirects on the apply URL
         job["apply_url"] = _unwrap_linkedin_redirect(job.get("apply_url"))
@@ -142,6 +135,5 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
     return {
         "saved": saved,
         "reposts_detected": reposts,
-        "skipped_already_exists": skipped_existing,
         "skipped_excluded_company": skipped_excluded,
     }

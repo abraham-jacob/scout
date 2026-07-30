@@ -53,6 +53,7 @@ def isolated_roles_config(tmp_path, monkeypatch):
     that need a different config overwrite or unlink app.config.CONFIG_FILE.
     """
     import app.config as app_config
+    app_config.load_config.cache_clear()
     config = tmp_path / "config.toml"
     config.write_text(STANDARD_TEST_CONFIG)
     monkeypatch.setattr(app_config, "CONFIG_FILE", config)
