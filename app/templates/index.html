@@ -48,6 +48,12 @@
     /* Chevron rotation for the "Full description" disclosure */
     .chev { transition: transform .2s; }
     .open .chev { transform: rotate(90deg); }
+
+    /* Bulk dismiss confirmation modal */
+    .modal-wrap { transition: opacity .18s; }
+    .modal-wrap.hidden-anim { opacity: 0; pointer-events: none; }
+    .modal-card { transition: transform .18s, opacity .18s; }
+    .modal-wrap.hidden-anim .modal-card { transform: scale(.96) translateY(6px); opacity: 0; }
   </style>
 </head>
 <body class="bg-paper dark:bg-ink min-h-screen text-slate-700 dark:text-slate-300 antialiased transition-colors">
@@ -189,6 +195,23 @@
         </div>
       </div>
 
+      <!-- Minimum/maximum match score -->
+      <div class="flex items-center gap-1.5" id="score-filter">
+        <span id="score-caption" class="text-[11px] uppercase tracking-wider font-bold dark:font-semibold text-slate-400 dark:text-slate-500">Min match</span>
+
+        <button id="invert-btn" onclick="onInvertClick()" type="button" aria-label="Flip filter direction" title="Show below threshold instead"
+                class="w-5 h-5 shrink-0 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-stone-100 dark:hover:bg-white/10 transition-colors">
+          <svg id="invert-icon" class="w-3.5 h-3.5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 10l5-5 5 5M7 14l5 5 5-5"/>
+          </svg>
+        </button>
+
+        <input id="score-slider" type="range" min="0" max="100" step="5" value="0"
+               oninput="onScoreInput()" onchange="onScoreCommit()"
+               class="w-28 h-1.5 rounded-full appearance-none bg-stone-200 dark:bg-edge cursor-pointer accent-orange-500 dark:accent-indigo-500 focus:outline-none focus:ring-2 focus:ring-orange-400/40 dark:focus:ring-indigo-500/50">
+        <span id="score-label" class="text-sm font-semibold dark:font-normal text-slate-500 dark:text-slate-400 tabular-nums w-9 text-right">Off</span>
+      </div>
+
       <!-- Company search with autocomplete -->
       <div class="relative">
         <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500 pointer-events-none"
@@ -245,6 +268,32 @@
          hx-swap="outerHTML">
     </div>
   </aside>
+
+  <!-- ================= Bulk dismiss confirmation modal ================= -->
+  <div id="dismiss-modal" class="modal-wrap hidden-anim fixed inset-0 z-40 flex items-start justify-center pt-32 px-4 bg-slate-900/40 dark:bg-black/60 backdrop-blur-sm" onclick="closeDismissModal()">
+    <div class="modal-card w-full max-w-md bg-white dark:bg-card border border-stone-200 dark:border-edge rounded-2xl shadow-2xl p-6" onclick="event.stopPropagation()">
+      <div class="flex items-start gap-3 mb-1">
+        <div class="w-9 h-9 shrink-0 rounded-full bg-rose-100 dark:bg-rose-500/15 text-rose-600 dark:text-rose-300 flex items-center justify-center">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7h16M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"/>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h2 id="dismiss-modal-title" class="text-lg font-bold dark:font-semibold text-slate-900 dark:text-white leading-tight">Dismiss jobs?</h2>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">This affects every job currently shown by your filters, not just the ones on screen.</p>
+        </div>
+      </div>
+
+      <ul id="dismiss-modal-list" class="mt-4 max-h-44 overflow-y-auto rounded-xl dark:rounded-lg border border-stone-100 dark:border-edge/70 divide-y divide-stone-100 dark:divide-edge/70 text-sm text-slate-600 dark:text-slate-300"></ul>
+
+      <div class="flex justify-end gap-2 mt-5">
+        <button type="button" onclick="closeDismissModal()" class="text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white px-4 py-2 rounded-xl dark:rounded-lg transition-colors">Cancel</button>
+        <button id="dismiss-modal-confirm" type="button" onclick="confirmBulkDismiss()" class="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 dark:bg-rose-500 dark:hover:bg-rose-400 text-white text-sm font-bold dark:font-semibold px-4 py-2 rounded-xl dark:rounded-lg transition-colors">
+          Dismiss
+        </button>
+      </div>
+    </div>
+  </div>
 
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script>
@@ -481,7 +530,7 @@
     document.querySelectorAll('.filter-btn').forEach(b => styleFilterBtn(b, b.classList.contains('active')));
 
     // Current filter state
-    const filters = { role_type: 'all', status: 'all', unseen_only: false, sort: 'newest', show_dismissed: false, company: '' };
+    const filters = { role_type: 'all', status: 'all', unseen_only: false, sort: 'newest', show_dismissed: false, company: '', min_score: 0, invert: false };
 
     function setFilter(btn, key, value) {
       filters[key] = value;
@@ -591,6 +640,31 @@
       searchInput.focus();
     }
 
+    // --- Minimum/maximum match score slider ---
+    const scoreSlider = document.getElementById('score-slider');
+    const scoreLabel = document.getElementById('score-label');
+    const scoreCaption = document.getElementById('score-caption');
+    const invertIcon = document.getElementById('invert-icon');
+
+    function onScoreInput() {
+      // Live label update only while dragging — the request fires on release.
+      const v = Number(scoreSlider.value);
+      scoreLabel.textContent = v === 0 ? 'Off' : (filters.invert ? '<' + v + '%' : v + '%+');
+    }
+
+    function onScoreCommit() {
+      filters.min_score = Number(scoreSlider.value);
+      applyFilters();
+    }
+
+    function onInvertClick() {
+      filters.invert = !filters.invert;
+      scoreCaption.textContent = filters.invert ? 'Max match' : 'Min match';
+      invertIcon.style.transform = filters.invert ? 'rotate(180deg)' : 'rotate(0deg)';
+      onScoreInput();
+      if (filters.min_score > 0) applyFilters();
+    }
+
     function applyFilters() {
       filters.unseen_only = document.getElementById('unseen-toggle').checked;
       filters.show_dismissed = document.getElementById('dismissed-toggle').checked;
@@ -601,8 +675,67 @@
         sort: filters.sort,
         show_dismissed: filters.show_dismissed,
         company: filters.company,
+        min_score: filters.min_score,
+        invert: filters.invert,
       });
       htmx.ajax('GET', '/jobs?' + params.toString(), { target: '#job-list', swap: 'innerHTML' });
+    }
+
+    // --- Bulk dismiss ---
+    // Operates on whatever .jobcard elements are currently rendered inside
+    // #job-list — the server has already applied every active filter, so the
+    // DOM is the source of truth for "what's shown" (no client-side re-filtering).
+    const dismissModal = document.getElementById('dismiss-modal');
+    const dismissModalTitle = document.getElementById('dismiss-modal-title');
+    const dismissModalList = document.getElementById('dismiss-modal-list');
+    const dismissModalConfirm = document.getElementById('dismiss-modal-confirm');
+
+    function shownJobCards() {
+      return Array.from(document.querySelectorAll('#job-list .jobcard'));
+    }
+
+    function openDismissModal() {
+      const shown = shownJobCards();
+      if (shown.length === 0) return;
+
+      const n = shown.length;
+      dismissModalTitle.textContent = `Dismiss ${n} job${n !== 1 ? 's' : ''}?`;
+      dismissModalConfirm.textContent = `Dismiss ${n} job${n !== 1 ? 's' : ''}`;
+
+      // Name what's affected so a wide/inverted filter can't quietly dismiss
+      // more than expected — list every title up to 6, then summarize the rest.
+      const MAX_LISTED = 6;
+      const listed = shown.slice(0, MAX_LISTED);
+      dismissModalList.innerHTML = listed.map(card => `
+        <li class="px-3 py-2 flex items-baseline justify-between gap-3">
+          <span class="truncate font-semibold dark:font-medium text-slate-700 dark:text-slate-200">${escapeHtml(card.dataset.title)}</span>
+          <span class="shrink-0 text-xs text-slate-400 dark:text-slate-500">${escapeHtml(card.dataset.company)}</span>
+        </li>`).join('');
+      if (shown.length > MAX_LISTED) {
+        dismissModalList.innerHTML += `<li class="px-3 py-2 text-slate-400 dark:text-slate-500 italic">+ ${shown.length - MAX_LISTED} more</li>`;
+      }
+
+      dismissModal.classList.remove('hidden-anim');
+    }
+
+    function closeDismissModal() {
+      dismissModal.classList.add('hidden-anim');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDismissModal();
+    });
+
+    async function confirmBulkDismiss() {
+      const jobIds = shownJobCards().map(card => card.dataset.jobId);
+      closeDismissModal();
+      if (jobIds.length === 0) return;
+      await fetch('/jobs/bulk_dismiss', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_ids: jobIds }),
+      });
+      applyFilters();
     }
 
     // --- Full description disclosure ---
