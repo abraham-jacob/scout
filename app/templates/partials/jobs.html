@@ -1,6 +1,15 @@
 {% if jobs %}
-<div class="text-xs font-bold dark:font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-4">
-  {{ jobs|length }} job{{ 's' if jobs|length != 1 else '' }} found
+<div class="flex items-center justify-between mb-4 gap-3">
+  <div class="text-sm font-bold dark:font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+    {{ jobs|length }} job{{ 's' if jobs|length != 1 else '' }} found
+  </div>
+  <button type="button" onclick="openDismissModal()"
+          class="inline-flex items-center gap-1.5 text-sm font-semibold dark:font-medium px-3 py-1.5 rounded-xl dark:rounded-lg border border-rose-200 dark:border-rose-500/30 bg-rose-50/60 dark:bg-rose-500/10 text-rose-600 dark:text-rose-300 hover:font-bold dark:hover:font-semibold hover:border-rose-300 dark:hover:border-rose-500/60 hover:bg-rose-100 dark:hover:bg-rose-500/20 hover:text-rose-700 dark:hover:text-rose-200 transition-colors">
+    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 7h16M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"/>
+    </svg>
+    Dismiss all shown
+  </button>
 </div>
 <div class="flex flex-col gap-4">
   {% for job in jobs %}

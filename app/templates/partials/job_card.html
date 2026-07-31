@@ -46,6 +46,7 @@
    app.config.role_color_map, so configured role types color consistently. #}
 
 <div id="job-{{ job.job_id }}"
+     data-job-id="{{ job.job_id }}" data-title="{{ job.title }}" data-company="{{ job.company }}"
      class="jobcard bg-white dark:bg-card border border-stone-200 dark:border-edge rounded-2xl dark:rounded-xl p-5 relative overflow-hidden transition-all">
 
   <!-- Status accent bar -->

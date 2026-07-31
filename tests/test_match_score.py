@@ -230,6 +230,50 @@ class TestSortByMatch:
         assert ids == ["new", "old"]
 
 
+class TestMinScoreFilter:
+    """Test the min_score parameter on _fetch_jobs."""
+
+    def test_excludes_null_scores_when_active(self, tmp_db):
+        """A NULL match_score (unenriched/failed) is excluded whenever min_score > 0."""
+        _insert_job("scored", match_score=75.0)
+        _insert_job("unscored")
+
+        ids = [j["job_id"] for j in _fetch_jobs(min_score=1)]
+        assert ids == ["scored"]
+
+    def test_below_threshold_excluded(self, tmp_db):
+        """Jobs scoring below min_score are excluded."""
+        _insert_job("low", match_score=40.0)
+        _insert_job("high", match_score=90.0)
+
+        ids = [j["job_id"] for j in _fetch_jobs(min_score=60)]
+        assert ids == ["high"]
+
+    def test_zero_includes_everything(self, tmp_db):
+        """min_score=0 (default/off) includes both scored and unscored jobs."""
+        _insert_job("scored", match_score=10.0)
+        _insert_job("unscored")
+
+        ids = {j["job_id"] for j in _fetch_jobs(min_score=0)}
+        assert ids == {"scored", "unscored"}
+
+    def test_invert_shows_below_threshold(self, tmp_db):
+        """invert=True flips the comparison to match_score < min_score."""
+        _insert_job("low", match_score=20.0)
+        _insert_job("high", match_score=90.0)
+
+        ids = [j["job_id"] for j in _fetch_jobs(min_score=60, invert=True)]
+        assert ids == ["low"]
+
+    def test_invert_still_excludes_null_scores(self, tmp_db):
+        """Inverted mode also excludes unscored jobs, per the same NULL-comparison rule."""
+        _insert_job("low", match_score=20.0)
+        _insert_job("unscored")
+
+        ids = [j["job_id"] for j in _fetch_jobs(min_score=60, invert=True)]
+        assert ids == ["low"]
+
+
 class TestBackfillScores:
     """Test the scores backfill script."""
 

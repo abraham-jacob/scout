@@ -20,8 +20,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Body, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from agent.runner import SetupError, check_setup, extract_single_job_id, resolve_scan_url
@@ -272,6 +272,8 @@ def _fetch_jobs(
     sort: str = "newest",
     show_dismissed: bool = False,
     company: str = "",
+    min_score: int = 0,
+    invert: bool = False,
 ) -> list[dict]:
     """Query jobs from DuckDB with optional filters and sort order.
 
@@ -279,7 +281,10 @@ def _fetch_jobs(
     offer/rejected stages), or "all". Dismissed jobs are hidden from the
     "all" view unless show_dismissed is set; other filters always win.
     company is a case-insensitive substring match; the UI only sends it for
-    3+ typed characters or an autocomplete pick.
+    3+ typed characters or an autocomplete pick. min_score filters to
+    match_score >= min_score when > 0 (or < min_score when invert is set),
+    which also excludes unscored jobs (NULL match_score) either way since a
+    NULL comparison is never true in SQL.
     """
     conn = get_connection()
     where, params = [], []
@@ -290,6 +295,9 @@ def _fetch_jobs(
     if company.strip():
         where.append("j.company ILIKE ?")
         params.append(f"%{company.strip()}%")
+    if min_score > 0:
+        where.append(f"j.match_score {'<' if invert else '>='} ?")
+        params.append(min_score)
     if status == "pipeline":
         where.append(f"j.status IN ({', '.join('?' * len(PIPELINE_STATUSES))})")
         params.extend(PIPELINE_STATUSES)
@@ -425,9 +433,11 @@ async def jobs(
     sort: str = "newest",
     show_dismissed: bool = False,
     company: str = "",
+    min_score: int = 0,
+    invert: bool = False,
 ) -> HTMLResponse:
     """Return the job list partial for HTMX."""
-    job_list = _fetch_jobs(role_type, status, unseen_only, sort, show_dismissed, company)
+    job_list = _fetch_jobs(role_type, status, unseen_only, sort, show_dismissed, company, min_score, invert)
     return templates.TemplateResponse(
         request,
         "partials/jobs.html",
@@ -580,6 +590,27 @@ async def update_status(
         {"job": job, "statuses": JOB_STATUSES,
          "role_colors": role_color_map(load_roles())},
     )
+
+
+@app.patch("/jobs/bulk_dismiss")
+async def bulk_dismiss(job_ids: list[str] = Body(embed=True)) -> JSONResponse:
+    """Dismiss every job in job_ids and return how many rows were updated.
+
+    The caller (the filter bar's bulk-dismiss action) always passes the
+    job_ids of whatever is currently rendered, since the server has already
+    applied every active filter — there is no separate filter re-evaluation
+    here.
+    """
+    if not job_ids:
+        return JSONResponse({"dismissed": 0})
+    conn = get_connection()
+    placeholders = ", ".join("?" * len(job_ids))
+    conn.execute(
+        f"UPDATE jobs SET status = 'dismissed' WHERE job_id IN ({placeholders})",
+        job_ids,
+    )
+    conn.close()
+    return JSONResponse({"dismissed": len(job_ids)})
 
 
 @app.patch("/jobs/{job_id}/seen", response_class=HTMLResponse)

@@ -211,6 +211,32 @@ class TestFetchJobs:
 
         assert jobs == []
 
+    @patch('app.main.get_connection')
+    def test_fetch_jobs_min_score(self, mock_get_conn):
+        """min_score adds a match_score >= ? clause, which also excludes NULLs."""
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = []
+        mock_get_conn.return_value = mock_conn
+
+        _fetch_jobs(min_score=70)
+
+        call_sql = mock_conn.execute.call_args[0][0]
+        call_params = mock_conn.execute.call_args[0][1]
+        assert "j.match_score >= ?" in call_sql
+        assert 70 in call_params
+
+    @patch('app.main.get_connection')
+    def test_fetch_jobs_min_score_zero_adds_no_filter(self, mock_get_conn):
+        """min_score=0 (the default/'off' state) adds no score filter."""
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = []
+        mock_get_conn.return_value = mock_conn
+
+        _fetch_jobs(min_score=0)
+
+        call_sql = mock_conn.execute.call_args[0][0]
+        assert "match_score >=" not in call_sql
+
 
 class TestIndexRoute:
     """Test GET / route."""
@@ -266,7 +292,7 @@ class TestJobsRoute:
         response = client.get("/jobs?role_type=Manager&status=applied")
 
         assert response.status_code == 200
-        mock_fetch.assert_called_once_with("Manager", "applied", False, "newest", False, "")
+        mock_fetch.assert_called_once_with("Manager", "applied", False, "newest", False, "", 0, False)
 
     @patch('app.main._fetch_jobs')
     def test_jobs_unseen_only_filter(self, mock_fetch, client):
@@ -279,6 +305,61 @@ class TestJobsRoute:
         # Verify unseen_only was passed as True
         call_args = mock_fetch.call_args[0]
         assert call_args[2] is True
+
+    @patch('app.main._fetch_jobs')
+    def test_jobs_min_score_filter(self, mock_fetch, client):
+        """GET /jobs passes min_score through to _fetch_jobs."""
+        mock_fetch.return_value = []
+
+        response = client.get("/jobs?min_score=70")
+
+        assert response.status_code == 200
+        call_args = mock_fetch.call_args[0]
+        assert call_args[6] == 70
+
+    @patch('app.main._fetch_jobs')
+    def test_jobs_invert_filter(self, mock_fetch, client):
+        """GET /jobs passes invert through to _fetch_jobs."""
+        mock_fetch.return_value = []
+
+        response = client.get("/jobs?min_score=70&invert=true")
+
+        assert response.status_code == 200
+        call_args = mock_fetch.call_args[0]
+        assert call_args[7] is True
+
+
+class TestBulkDismissRoute:
+    """Test PATCH /jobs/bulk_dismiss route."""
+
+    @patch('app.main.get_connection')
+    def test_bulk_dismiss_updates_all_given_ids(self, mock_get_conn, client):
+        """All job_ids in the body are set to status='dismissed' in one query."""
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+
+        response = client.patch("/jobs/bulk_dismiss", json={"job_ids": ["job1", "job2"]})
+
+        assert response.status_code == 200
+        assert response.json() == {"dismissed": 2}
+        call_sql = mock_conn.execute.call_args[0][0]
+        call_params = mock_conn.execute.call_args[0][1]
+        assert "status = 'dismissed'" in call_sql
+        assert "job_id IN (?, ?)" in call_sql
+        assert call_params == ["job1", "job2"]
+        mock_conn.close.assert_called_once()
+
+    @patch('app.main.get_connection')
+    def test_bulk_dismiss_empty_list_is_a_noop(self, mock_get_conn, client):
+        """An empty job_ids list runs no query and reports zero dismissed."""
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+
+        response = client.patch("/jobs/bulk_dismiss", json={"job_ids": []})
+
+        assert response.status_code == 200
+        assert response.json() == {"dismissed": 0}
+        mock_conn.execute.assert_not_called()
 
 
 class TestCompaniesRoute:

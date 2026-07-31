@@ -186,6 +186,11 @@ Tests mirror this: `tests/test_agent_llm_common.py`, `tests/test_agent_claude.py
   the web UI adds a 30-minute overall guardrail.
 - Tests add the project root to `sys.path` via `tests/conftest.py`; import as
   `from app...` / `from agent...`.
+- **Any UI change gets a real visual mockup before implementation.** Build it
+  as a self-contained HTML file under `mockups/` (matching the app's real
+  Tailwind classes, fonts, and dual-theme toggle — see existing files there
+  for the pattern) and add an entry linking to it from `mockups/index.html`.
+  Get it approved before writing the implementation.
 
 ## Documentation site
 
