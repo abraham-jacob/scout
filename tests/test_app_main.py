@@ -739,6 +739,21 @@ class TestStartRunBackground:
             assert _run["error"] is not None
             assert "imed out" in _run["error"]
 
+    @patch('app.main.load_config')
+    @patch('app.main.threading.Timer')
+    @patch('app.main.subprocess.Popen')
+    def test_start_run_background_uses_configured_timeout(
+        self, mock_popen, mock_timer, mock_load_config, reset_run_state
+    ):
+        """The watchdog timer and the timed-out error message honor
+        [scrape] run_timeout_minutes instead of a hardcoded 30."""
+        mock_popen.return_value = _make_proc(stdout_lines=[], returncode=0)
+        mock_load_config.return_value = Mock(run_timeout_minutes=90)
+
+        _start_run_background("https://linkedin.com")
+
+        assert mock_timer.call_args[0][0] == 90 * 60
+
 
 class TestRouteIntegration:
     """Integration tests for routes."""

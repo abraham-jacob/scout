@@ -368,6 +368,7 @@ def _start_run_background(url: str | None, log_model_calls: bool = False) -> Non
 
     # Overall wall-clock guardrail (the runner has its own per-subprocess caps).
     timed_out = {"v": False}
+    timeout_minutes = load_config().run_timeout_minutes
 
     def _kill() -> None:
         timed_out["v"] = True
@@ -376,7 +377,7 @@ def _start_run_background(url: str | None, log_model_calls: bool = False) -> Non
         except ProcessLookupError:
             pass
 
-    watchdog = threading.Timer(1800, _kill)
+    watchdog = threading.Timer(timeout_minutes * 60, _kill)
     watchdog.start()
 
     try:
@@ -398,9 +399,11 @@ def _start_run_background(url: str | None, log_model_calls: bool = False) -> Non
         _run["running"] = False
         _run["finished_at"] = datetime.now(timezone.utc)
         if timed_out["v"]:
-            _run["error"] = "Timed out after 30 minutes"
+            _run["error"] = f"Timed out after {timeout_minutes} minutes"
             _mark_active_as_error("timed out")
-            logging.getLogger("scout").error("Run timed out after 30 minutes")
+            logging.getLogger("scout").error(
+                "Run timed out after %d minutes", timeout_minutes
+            )
         elif proc.returncode != 0:
             _run["error"] = ("".join(err_lines)[-500:]).strip() or "Unknown error"
             _mark_active_as_error("run failed")

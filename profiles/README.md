@@ -33,6 +33,9 @@ dir = "~/.local/state/scout/logs"   # daily app log + opt-in model-call log;
 [scrape]                            # OPTIONAL — omit unless you've changed
 download_dir = "~/Downloads"        # Chrome's download folder. Defaults to
                                     # ~/Downloads (works on Win/Mac/Linux).
+# run_timeout_minutes = 30          # overall wall-clock guardrail for a full
+                                    # run; raise it if you have many searches
+                                    # or a slower LLM backend. Defaults to 30.
 
 [llm]                               # REQUIRED
 backend = "claude"                  # "claude" or "api" (no default)
