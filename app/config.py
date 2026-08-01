@@ -26,6 +26,9 @@ copyable example):
   on Windows/macOS/Linux); override it only if you've changed Chrome's
   download location. Unlike the sections above it has a sensible cross-platform
   default because it's an environment path, not a behavior knob.
+  ``run_timeout_minutes``: the overall wall-clock guardrail the web UI kills a
+  run after. Defaults to 30; raise it for configs with many
+  ``[[linkedin_searches]]`` entries or a slower LLM backend.
 - ``[llm]`` (required) — ``backend``: which model backend runs the two headless
   passes, description cleaning (Pass 2) and enrichment/scoring (Pass 3). Either
   ``"claude"`` (the pipeline's original all-Claude behavior) or ``"api"`` to
@@ -58,6 +61,10 @@ CONFIG_FILE = PROFILES_DIR / "config.toml"
 # Chrome's default download folder on every supported OS. Used when the
 # optional [scrape] download_dir isn't set (see the module docstring).
 DEFAULT_DOWNLOAD_DIR = "~/Downloads"
+
+# Overall wall-clock guardrail (minutes) for a full `python -m agent.runner`
+# invocation, used when the optional [scrape] run_timeout_minutes isn't set.
+DEFAULT_RUN_TIMEOUT_MINUTES = 30
 
 # LLM backend for the two headless passes (clean + enrich). "claude" runs them
 # on the Claude CLI; "api" routes them to an OpenAI-compatible endpoint. The
@@ -135,6 +142,7 @@ class Config:
     dealbreaker_cap: float
     log_dir: str
     download_dir: str
+    run_timeout_minutes: int
     llm_backend: str
     max_workers: int
     api_base_url: str | None
@@ -406,6 +414,7 @@ def load_config() -> Config:
     # If the section/key is present it must be a non-empty path (a blank value
     # is a typo, not an intent to fall back).
     download_dir = DEFAULT_DOWNLOAD_DIR
+    run_timeout_minutes = DEFAULT_RUN_TIMEOUT_MINUTES
     scrape = data.get("scrape")
     if isinstance(scrape, dict) and "download_dir" in scrape:
         raw_download = str(scrape.get("download_dir") or "").strip()
@@ -415,6 +424,10 @@ def load_config() -> Config:
                 "non-empty path when set (omit it to use ~/Downloads)"
             )
         download_dir = raw_download
+    if isinstance(scrape, dict) and "run_timeout_minutes" in scrape:
+        run_timeout_minutes = _require_positive_int(
+            scrape, "scrape", "run_timeout_minutes"
+        )
 
     (llm_backend, max_workers, api_base_url, api_model, api_key,
      api_timeout, api_clean_params, api_enrich_params) = _parse_llm(data)
@@ -428,6 +441,7 @@ def load_config() -> Config:
         dealbreaker_cap=dealbreaker_cap,
         log_dir=log_dir,
         download_dir=download_dir,
+        run_timeout_minutes=run_timeout_minutes,
         llm_backend=llm_backend,
         max_workers=max_workers,
         api_base_url=api_base_url,

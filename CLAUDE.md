@@ -102,7 +102,8 @@ weights summing to 1, plus dealbreaker_cap used by `compute_match_score`),
 optional section, `[scrape]`, carries `download_dir` — where the browser saves
 the scrape blob; it defaults to `~/Downloads` (correct on Windows/macOS/Linux)
 and `runner.download_dir()` expands it, so it's the only config path with a
-cross-platform default rather than failing loudly. `[llm]` carries `backend`
+cross-platform default rather than failing loudly — and `run_timeout_minutes`,
+the web UI's overall wall-clock guardrail (default 30; see below). `[llm]` carries `backend`
 (required, `"claude"` or `"api"` — no default, so the config always states
 which one) which selects the backend for the two **headless** passes —
 description cleaning and enrichment/scoring — via `agent/llm.py::run_headless()`, and
@@ -183,7 +184,8 @@ Tests mirror this: `tests/test_agent_llm_common.py`, `tests/test_agent_claude.py
   `CLEAN_MODEL` = Haiku, `ENRICH_MODEL` = Sonnet); the api-backend model comes
   from `[llm.api] model` in the config instead. Each `claude` subprocess has a
   `SUBPROCESS_TIMEOUT_S` wall-clock kill (api calls use `[llm.api] timeout`);
-  the web UI adds a 30-minute overall guardrail.
+  the web UI adds an overall guardrail on top (`[scrape] run_timeout_minutes`,
+  default 30).
 - Tests add the project root to `sys.path` via `tests/conftest.py`; import as
   `from app...` / `from agent...`.
 - **Any UI change gets a real visual mockup before implementation.** Build it

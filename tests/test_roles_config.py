@@ -240,7 +240,7 @@ class TestConfigSections:
 
 
 class TestScrapeSection:
-    """Test the optional [scrape] download_dir config key."""
+    """Test the optional [scrape] download_dir/run_timeout_minutes config keys."""
 
     def test_defaults_to_downloads_when_absent(self):
         """No [scrape] section -> download_dir defaults to ~/Downloads."""
@@ -257,6 +257,29 @@ class TestScrapeSection:
         """A present-but-blank download_dir is a typo, not a fallback."""
         _write_config(ROLES_ONLY + '\n[scrape]\ndownload_dir = "  "\n')
         with pytest.raises(ValueError, match="download_dir"):
+            load_config()
+
+    def test_run_timeout_defaults_to_30_when_absent(self):
+        """No [scrape] section -> run_timeout_minutes defaults to 30."""
+        from app.config import DEFAULT_RUN_TIMEOUT_MINUTES
+        _write_config(ROLES_ONLY)  # boilerplate has no [scrape] section
+        assert load_config().run_timeout_minutes == DEFAULT_RUN_TIMEOUT_MINUTES
+
+    def test_run_timeout_override_is_used(self):
+        """A [scrape] run_timeout_minutes value overrides the default."""
+        _write_config(ROLES_ONLY + '\n[scrape]\nrun_timeout_minutes = 90\n')
+        assert load_config().run_timeout_minutes == 90
+
+    def test_run_timeout_non_integer_raises(self):
+        """A non-integer run_timeout_minutes is a typo, not a fallback."""
+        _write_config(ROLES_ONLY + '\n[scrape]\nrun_timeout_minutes = "soon"\n')
+        with pytest.raises(ValueError, match="run_timeout_minutes"):
+            load_config()
+
+    def test_run_timeout_zero_raises(self):
+        """run_timeout_minutes must be at least 1 minute."""
+        _write_config(ROLES_ONLY + '\n[scrape]\nrun_timeout_minutes = 0\n')
+        with pytest.raises(ValueError, match="run_timeout_minutes"):
             load_config()
 
 
