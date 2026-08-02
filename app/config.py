@@ -358,8 +358,9 @@ def load_config() -> Config:
     a value is malformed. Failing loudly is deliberate: there are no hidden
     defaults to fall back to. Cached for the process lifetime — call
     load_config.cache_clear() if profiles/config.toml changes while the
-    process is running (tests do this via a fixture; there is no other
-    caller that needs a live reload).
+    process is running (tests do this via a fixture; app/main.py's
+    POST /api/extension/reload-config does the same for the popup's Reload
+    Saved Searches button).
     """
     if not CONFIG_FILE.exists():
         raise ValueError(

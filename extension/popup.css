@@ -270,6 +270,87 @@ body {
   margin-bottom: 8px;
 }
 
+.section-title-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.section-title-row .section-title {
+  margin-bottom: 0;
+}
+
+.icon-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.icon-btn:hover:not(:disabled) {
+  color: var(--text-bright);
+  background: var(--card);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Enabled only while a run is active — the inverse of every other control
+   in the popup, which disable during a run instead. */
+.btn-abort {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--bad);
+  background: transparent;
+  color: var(--bad);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-abort:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.btn-abort:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.btn-abort-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.icon-btn.is-loading svg {
+  animation: scout-spin 0.8s linear infinite;
+}
+
 .search-list {
   flex: 0 0 auto;
   /* ~3 rows: 3 * (row height ~27px) + 2 * (gap 4px) */
@@ -374,6 +455,11 @@ body {
   margin-bottom: 6px;
 }
 
+.hint--error {
+  color: var(--bad);
+  margin-top: 0;
+}
+
 .drawer {
   flex: 0 0 auto;
   /* Fixed, not max-height — always exactly this tall regardless of content,
@@ -448,6 +534,10 @@ body {
   color: var(--bad);
 }
 
+.step-icon--stopped {
+  color: var(--text-dim);
+}
+
 .step-body {
   min-width: 0;
 }
@@ -502,6 +592,11 @@ body {
 
 .log-line--bad {
   color: var(--bad);
+  font-weight: 600;
+}
+
+.log-line--muted {
+  color: var(--text-dim);
   font-weight: 600;
 }
 

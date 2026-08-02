@@ -25,6 +25,8 @@ async function handleMessage(message) {
   switch (message && message.type) {
     case "SCOUT_GET_SEARCHES":
       return scoutFetch("/api/extension/searches");
+    case "SCOUT_RELOAD_SEARCHES":
+      return scoutFetch("/api/extension/reload-config", { method: "POST" });
     case "SCOUT_DEDUPE":
       return scoutFetch("/api/extension/dedupe", {
         method: "POST",
@@ -37,6 +39,8 @@ async function handleMessage(message) {
       });
     case "SCOUT_GET_STATUS":
       return scoutFetch("/api/extension/status");
+    case "SCOUT_KILL":
+      return scoutFetch("/api/extension/kill", { method: "POST" });
     case "SCOUT_OPEN_TAB":
       return openTab(message.url);
     case "SCOUT_RUN_SAVED_SEARCH":
@@ -107,11 +111,17 @@ function openTab(url) {
  * custom-search path: the extension navigates the tab itself instead of the
  * user already being on the page (Pass 1's manual-page path), but from here
  * on it's the exact same content-script harvest — see content.js.
+ *
+ * ``tabId`` is stamped onto the message (and echoed back in the response)
+ * so content.js can persist it into its own run-state — the popup's Abort
+ * button needs to know which tab to message, including after a popup
+ * close/reopen (see popup.js's abortRun()).
  */
 async function runTabHarvest(url, harvestMessage) {
   const tab = await new Promise((resolve) => chrome.tabs.create({ url, active: false }, resolve));
   await waitForTabComplete(tab.id);
-  return sendToTab(tab.id, harvestMessage);
+  const response = await sendToTab(tab.id, { ...harvestMessage, tabId: tab.id });
+  return { ...response, tabId: tab.id };
 }
 
 const LINKEDIN_JOBS_URL = /^https:\/\/www\.linkedin\.com\/jobs\//;

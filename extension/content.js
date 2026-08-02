@@ -37,19 +37,44 @@ const WORKPLACE = { "1": "On-site", "2": "Remote", "3": "Hybrid" };
 // run's worth of state" at any time.
 const STORAGE_KEY = "scout_run_state";
 
+// Set by SCOUT_ABORT (the popup's Abort button) and checked at every natural
+// checkpoint in the harvest — see bailIfAborted()/HARVEST_* polling and
+// fetchAndIngest's loop. Reset to false at the start of every fresh
+// run/resume in markRunning(), so it can never leak from a previous run.
+let abortRequested = false;
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === "SCOUT_HARVEST") {
-    runHarvest(message.searchName || "Manual scrape");
+    runHarvest(message.searchName || "Manual scrape", message.tabId);
     sendResponse({ started: true });
   } else if (message && message.type === "SCOUT_HARVEST_SINGLE_JOB") {
-    runSingleJobHarvest(message.jobId, message.searchName || "Single job scan");
+    runSingleJobHarvest(message.jobId, message.searchName || "Single job scan", message.tabId);
     sendResponse({ started: true });
   } else if (message && message.type === "SCOUT_RESUME_HARVEST") {
     runResumeHarvest(message.pendingIds, message.searchName,
-                     message.completedCount || 0, message.totalCount || message.pendingIds.length);
+                     message.completedCount || 0, message.totalCount || message.pendingIds.length,
+                     message.tabId);
     sendResponse({ started: true });
+  } else if (message && message.type === "SCOUT_ABORT") {
+    abortRequested = true;
+    sendResponse({ acknowledged: true });
   }
 });
+
+/**
+ * If SCOUT_ABORT landed since the run started, tear down (clear stored
+ * state, report the terminal "aborted" phase) and return true so the caller
+ * can bail out immediately. A no-op returning false otherwise. Checked at
+ * every natural pause point in runHarvest — the long jittered fetch loop
+ * itself is covered separately inside fetchAndIngest, which has its own
+ * abortRequested check at the top of the loop.
+ */
+async function bailIfAborted() {
+  if (!abortRequested) return false;
+  await clearRunState();
+  report({ phase: "aborted" });
+  return true;
+}
 
 /**
  * Run the full Pass 1 pipeline against the current page: wait for the
@@ -57,13 +82,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
  * is stable — see harvestJobIdsUntilStable), dedupe against the backend,
  * then fetch+ingest every new job (see fetchAndIngest).
  */
-async function runHarvest(searchName) {
+async function runHarvest(searchName, tabId) {
   try {
-    await markRunning(searchName);
+    await markRunning(searchName, tabId);
     report({ phase: "waiting" });
     await waitForRender();
+    if (await bailIfAborted()) return;
 
     const jobIds = await harvestJobIdsUntilStable();
+    if (await bailIfAborted()) return;
     report({ phase: "harvested", count: jobIds.length });
     if (jobIds.length === 0) {
       await clearRunState();
@@ -72,6 +99,7 @@ async function runHarvest(searchName) {
     }
 
     const dedupeResult = await relay({ type: "SCOUT_DEDUPE", jobIds });
+    if (await bailIfAborted()) return;
     const newIds = dedupeResult.new_ids || [];
     report({ phase: "deduped", total: jobIds.length, new: newIds.length });
     if (newIds.length === 0) {
@@ -93,10 +121,11 @@ async function runHarvest(searchName) {
  * just a dedupe check and one Voyager fetch. Mirrors the CDP path's
  * scrape_single_prompt.md variant, minus the browser-agent overhead.
  */
-async function runSingleJobHarvest(jobId, searchName) {
+async function runSingleJobHarvest(jobId, searchName, tabId) {
   try {
-    await markRunning(searchName);
+    await markRunning(searchName, tabId);
     const dedupeResult = await relay({ type: "SCOUT_DEDUPE", jobIds: [jobId] });
+    if (await bailIfAborted()) return;
     if ((dedupeResult.new_ids || []).length === 0) {
       await clearRunState();
       report({ phase: "done", accepted: 0, note: "already in Scout" });
@@ -116,9 +145,9 @@ async function runSingleJobHarvest(jobId, searchName) {
  * state it's resuming from) — fetchAndIngest overwrites it again with fresh
  * halt state if this halts a second time, or clears it on success.
  */
-async function runResumeHarvest(pendingIds, searchName, completedCount, totalCount) {
+async function runResumeHarvest(pendingIds, searchName, completedCount, totalCount, tabId) {
   try {
-    await markRunning(searchName);
+    await markRunning(searchName, tabId);
     await fetchAndIngest(pendingIds, searchName, completedCount, totalCount);
   } catch (err) {
     await clearRunState();
@@ -134,6 +163,16 @@ async function runResumeHarvest(pendingIds, searchName, completedCount, totalCou
  * finish, clears any stored state. ``completedSoFar``/``total`` are for
  * progress display continuity across a Resume (e.g. "6 of 9" rather than
  * restarting the counter at 1).
+ *
+ * Also checked here (not just via bailIfAborted's callers) is abortRequested
+ * — this loop, with its multi-second jitter between fetches, is where an
+ * Abort click is overwhelmingly likely to land. Unlike a halt, an abort
+ * deliberately discards whatever's already been fetched rather than
+ * ingesting it: ingesting would spawn a *new* Pass 2/3 subprocess after the
+ * click, which the backend kill signal (fired at click time, before that
+ * subprocess existed) can never reach — leaving the run looking stuck from
+ * the popup's perspective long after it visibly "stopped." See
+ * extension/popup.js's abortRun().
  */
 async function fetchAndIngest(pendingIds, searchName, completedSoFar, total) {
   const pacing = await relay({ type: "SCOUT_GET_SEARCHES" });
@@ -143,6 +182,11 @@ async function fetchAndIngest(pendingIds, searchName, completedSoFar, total) {
   const jobs = {};
   let haltState = null;
   for (let i = 0; i < pendingIds.length; i++) {
+    if (abortRequested) {
+      await clearRunState();
+      report({ phase: "aborted" });
+      return;
+    }
     const jobId = pendingIds[i];
     const outcome = await fetchJob(jobId);
     if (outcome.halted) {
@@ -193,10 +237,16 @@ async function fetchAndIngest(pendingIds, searchName, completedSoFar, total) {
  * popup checks (see popup.js's init()) to know a harvest is active in some
  * tab and keep every Run button disabled, even though it has no live
  * progress history to show for it (harvest lines are broadcast-only, not
- * persisted — see report() below).
+ * persisted — see report() below). Also resets abortRequested (a fresh
+ * run/resume must never inherit a previous one's abort flag) and persists
+ * ``tabId`` so the popup's Abort button can message this tab even after a
+ * close/reopen — this content script has no chrome.tabs access of its own
+ * to look its id up, so the harvest's initiator (popup.js or background.js,
+ * both of which already know it synchronously) passes it in.
  */
-function markRunning(searchName) {
-  return setRunState({ status: "running", searchName, url: location.href, startedAt: Date.now() });
+function markRunning(searchName, tabId) {
+  abortRequested = false;
+  return setRunState({ status: "running", searchName, url: location.href, startedAt: Date.now(), tabId });
 }
 
 /**
@@ -311,7 +361,7 @@ async function harvestJobIdsUntilStable() {
   let ids = harvestJobIds();
   let stableStreak = 0;
 
-  while (Date.now() < deadline && stableStreak < HARVEST_STABLE_ROUNDS) {
+  while (Date.now() < deadline && stableStreak < HARVEST_STABLE_ROUNDS && !abortRequested) {
     scrollResultsPanel();
     await sleep(HARVEST_POLL_MS);
     const next = harvestJobIds();

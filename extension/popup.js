@@ -11,12 +11,15 @@ const contentEl = document.getElementById("content");
 const offlineEl = document.getElementById("offline");
 const connStatusEl = document.getElementById("conn-status");
 const searchListEl = document.getElementById("saved-searches");
+const reloadBtn = document.getElementById("btn-reload");
+const reloadErrorEl = document.getElementById("reload-error");
 const currentPageBtn = document.getElementById("btn-current");
 const currentPageHint = document.getElementById("current-page-hint");
 const customUrlInput = document.getElementById("custom-url");
 const customBtn = document.getElementById("btn-custom");
 const drawerEl = document.getElementById("drawer");
 const themeToggleBtn = document.getElementById("theme-toggle");
+const abortBtn = document.getElementById("btn-abort");
 
 const LINKEDIN_JOBS_PATTERN = /^https:\/\/www\.linkedin\.com\/jobs\//;
 
@@ -40,6 +43,11 @@ const STATUS_POLL_MS = 1500;
 
 let harvesting = false;
 let statusPollTimer = null;
+// The tab id the current harvest is running in, if any — needed so Abort can
+// message the right tab (see abortRun()). null whenever there's no browser
+// harvest to reach (Pass 2/3 only, or idle). Restored from chrome.storage.local
+// on a popup reopen via checkStoredRunState(), same as the rest of run state.
+let harvestingTabId = null;
 
 init();
 
@@ -82,6 +90,11 @@ function rehydratePass23Running(status) {
   const name = (status.searches || [])[0]?.name;
   if (name) upsertStep("s-target", "done", name);
   harvesting = true;
+  // Pass 1 has already finished by this point (content.js clears its stored
+  // state as soon as ingest hands off — see fetchAndIngest) — nothing left
+  // to send SCOUT_ABORT to. Abort still works here via the backend kill
+  // alone (see abortRun()).
+  harvestingTabId = null;
   applyRunTriggerState();
   startStatusPolling();
 }
@@ -110,6 +123,7 @@ async function checkStoredRunState() {
   if (state.status === "running") {
     upsertStep("s-wait", "active", "Run in progress in the background…");
     harvesting = true;
+    harvestingTabId = state.tabId || null;
     applyRunTriggerState();
   } else if (state.status === "halted") {
     appendHaltBanner(state);
@@ -126,6 +140,8 @@ currentPageBtn.addEventListener("click", startCurrentPageHarvest);
 customUrlInput.addEventListener("input", refreshCustomButton);
 customBtn.addEventListener("click", startCustomSearchHarvest);
 themeToggleBtn.addEventListener("click", toggleTheme);
+reloadBtn.addEventListener("click", reloadSearches);
+abortBtn.addEventListener("click", abortRun);
 
 /**
  * Flip between light/dark, persisting the choice so it survives the next
@@ -187,6 +203,7 @@ function showOffline() {
  */
 function renderSearches(searches) {
   searchListEl.innerHTML = "";
+  reloadBtn.disabled = harvesting;
   if (searches.length === 0) {
     const empty = document.createElement("div");
     empty.className = "hint";
@@ -212,6 +229,30 @@ function renderSearches(searches) {
     row.appendChild(name);
     row.appendChild(runBtn);
     searchListEl.appendChild(row);
+  }
+}
+
+/**
+ * Re-read profiles/config.toml server-side (SCOUT_RELOAD_SEARCHES →
+ * POST /api/extension/reload-config, which clears app/config.py's
+ * lru_cache'd Config) and re-render the saved-search list from the result.
+ * On failure (e.g. the file was mid-edit and fails to parse), the currently
+ * displayed list is left alone and the error is shown inline instead —
+ * never wipe a working list over a bad edit.
+ */
+async function reloadSearches() {
+  reloadBtn.disabled = true;
+  reloadBtn.classList.add("is-loading");
+  reloadErrorEl.classList.add("hidden");
+  try {
+    const data = await sendMessage({ type: "SCOUT_RELOAD_SEARCHES" });
+    renderSearches(data.searches || []);
+  } catch (err) {
+    reloadErrorEl.textContent = err.message || "Couldn't reload saved searches.";
+    reloadErrorEl.classList.remove("hidden");
+  } finally {
+    reloadBtn.classList.remove("is-loading");
+    reloadBtn.disabled = harvesting;
   }
 }
 
@@ -268,9 +309,10 @@ async function startCurrentPageHarvest() {
   if (!tab || !LINKEDIN_JOBS_PATTERN.test(tab.url || "")) return;
 
   beginRun("Current page");
+  harvestingTabId = tab.id;
   try {
     await new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tab.id, { type: "SCOUT_HARVEST", searchName: "Manual scrape" }, (resp) => {
+      chrome.tabs.sendMessage(tab.id, { type: "SCOUT_HARVEST", searchName: "Manual scrape", tabId: tab.id }, (resp) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -290,7 +332,8 @@ async function startCurrentPageHarvest() {
 async function runSavedSearch(search) {
   beginRun(search.name);
   try {
-    await sendMessage({ type: "SCOUT_RUN_SAVED_SEARCH", url: search.url, searchName: search.name });
+    const resp = await sendMessage({ type: "SCOUT_RUN_SAVED_SEARCH", url: search.url, searchName: search.name });
+    harvestingTabId = resp.tabId ?? null;
   } catch (err) {
     failRun(`Couldn't run "${search.name}": ${err.message}`);
   }
@@ -306,11 +349,10 @@ async function startCustomSearchHarvest() {
 
   beginRun("Custom Search");
   try {
-    if (c.kind === "search") {
-      await sendMessage({ type: "SCOUT_RUN_SAVED_SEARCH", url: c.url, searchName: "Custom Search" });
-    } else {
-      await sendMessage({ type: "SCOUT_RUN_SINGLE_JOB", url: c.url, jobId: c.jobId, searchName: "Custom Search" });
-    }
+    const resp = c.kind === "search"
+      ? await sendMessage({ type: "SCOUT_RUN_SAVED_SEARCH", url: c.url, searchName: "Custom Search" })
+      : await sendMessage({ type: "SCOUT_RUN_SINGLE_JOB", url: c.url, jobId: c.jobId, searchName: "Custom Search" });
+    harvestingTabId = resp.tabId ?? null;
   } catch (err) {
     failRun(`Couldn't start: ${err.message}`);
   }
@@ -367,6 +409,16 @@ function renderProgress(event) {
       appendLogLine(`Error: ${event.message}`, "bad");
       endRun();
       return;
+    case "aborted":
+      // abortRun() already showed the "Stopped by user" line and re-enabled
+      // controls the instant the button was clicked — this delayed event is
+      // just confirmation that the harvesting tab actually noticed the flag.
+      // Only re-freeze any step icon that's still spinning (rare: the tab's
+      // own report can race abortRun()'s immediate freeze if a step
+      // transitioned in between) and no-op endRun() again.
+      freezeSpinningSteps();
+      endRun();
+      return;
   }
 }
 
@@ -410,7 +462,8 @@ function startStatusPolling() {
       appendLogLine(truncateJobLogMsg(line.msg), line.level === "good" ? "good" : line.level === "warn" ? "bad" : null));
 
     if (!status.running) {
-      if (status.error) appendLogLine(`Scout server error: ${status.error}`, "bad");
+      if (status.killed) appendLogLine("■ Stopped by user.", "muted");
+      else if (status.error) appendLogLine(`Scout server error: ${status.error}`, "bad");
       stopStatusPolling();
       endRun();
     }
@@ -469,6 +522,9 @@ function buildStepIcon(status) {
   } else if (status === "error") {
     span.classList.add("step-icon--error");
     span.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  } else if (status === "stopped") {
+    span.classList.add("step-icon--stopped");
+    span.innerHTML = '<svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg>';
   } else {
     const dot = document.createElement("span");
     dot.className = "step-dot";
@@ -547,7 +603,7 @@ async function resumeRun(state) {
   beginRun(state.searchName);
   upsertStep("s-voyager", "active", `Resuming — ${state.completedCount} of ${state.totalCount}`);
   try {
-    await sendMessage({
+    const resp = await sendMessage({
       type: "SCOUT_RESUME_RUN",
       url: state.url,
       pendingIds: state.pendingIds,
@@ -555,6 +611,7 @@ async function resumeRun(state) {
       completedCount: state.completedCount,
       totalCount: state.totalCount,
     });
+    harvestingTabId = resp.tabId ?? null;
   } catch (err) {
     failRun(`Couldn't resume: ${err.message}`);
   }
@@ -580,6 +637,7 @@ function beginRun(targetLabel) {
  */
 function endRun() {
   harvesting = false;
+  harvestingTabId = null;
   applyRunTriggerState();
 }
 
@@ -594,6 +652,64 @@ function failRun(message) {
 
 function applyRunTriggerState() {
   document.querySelectorAll(".run-trigger").forEach((b) => { b.disabled = harvesting; });
+  reloadBtn.disabled = harvesting;
+  // Abort is the mirror image of every other control here: enabled only
+  // while a run is actually active, disabled the rest of the time.
+  abortBtn.disabled = !harvesting;
   refreshCurrentPageButton();
   refreshCustomButton();
+}
+
+/**
+ * Stop the run right where it is, whichever pass it's in. Fires both a
+ * browser-side SCOUT_ABORT (to whichever tab is harvesting, if any) and the
+ * backend kill (POST /api/extension/kill, for a Pass 2/3 subprocess) rather
+ * than trying to track precisely which pass is live — whichever one is
+ * actually running absorbs it, the other is a harmless no-op. No
+ * confirmation dialog (explicit design decision) and no Resume offered
+ * afterward, unlike a block-halt — this is deliberate, not something to
+ * recover from.
+ *
+ * Re-enables every control immediately rather than waiting for the actual
+ * "aborted"/killed confirmation to round-trip back — the harvesting tab's
+ * own loop only notices SCOUT_ABORT at its next checkpoint, which can lag by
+ * up to one fetch-jitter cycle, and there's no reason to hold the popup
+ * hostage to that. Both signals are fire-and-forget; a real confirmation
+ * (the "■ Stopped by user" log line) still arrives shortly after and is
+ * harmless to render on top of an already-idle popup.
+ */
+function abortRun() {
+  if (!harvesting) return;
+
+  if (harvestingTabId) {
+    chrome.tabs.sendMessage(harvestingTabId, { type: "SCOUT_ABORT" }, () => {
+      void chrome.runtime.lastError; // best-effort — tab may already be gone
+    });
+  }
+  sendMessage({ type: "SCOUT_KILL" }).catch(() => null);
+
+  // Show the confirmation and freeze the drawer *before* re-enabling
+  // controls, not after — otherwise the buttons visibly come back to life
+  // a moment before the user sees any acknowledgment that Abort did
+  // anything at all.
+  freezeSpinningSteps();
+  appendLogLine("■ Stopped by user — nothing further was fetched or saved.", "muted");
+  stopStatusPolling();
+  endRun();
+}
+
+/**
+ * Freeze whichever step is still showing a spinner into a neutral "stopped"
+ * icon — otherwise it'd keep animating forever with nothing left to update
+ * it. Only steps that actually got shown (existing in the DOM) are touched,
+ * so this never spuriously creates a row for a phase the run never reached.
+ */
+function freezeSpinningSteps() {
+  ["s-wait", "s-harvest", "s-dedupe", "s-voyager", "s-ingest"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && el.querySelector(".step-spinner")) {
+      const label = el.querySelector(".step-label")?.textContent || "";
+      upsertStep(id, "stopped", `${label} — stopped`);
+    }
+  });
 }

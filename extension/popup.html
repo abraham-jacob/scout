@@ -31,7 +31,13 @@
          Search and Scrape Current Page stay pinned and always visible. -->
     <div class="pane pane--controls">
       <div class="section section--grow">
-        <div class="section-title">Saved Searches</div>
+        <div class="section-title-row">
+          <div class="section-title">Saved Searches</div>
+          <button id="btn-reload" class="icon-btn" title="Reload from profiles/config.toml" aria-label="Reload saved searches" disabled>
+            <svg class="icon-reload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          </button>
+        </div>
+        <div id="reload-error" class="hint hint--error hidden"></div>
         <div id="saved-searches" class="search-list"></div>
       </div>
 
@@ -53,7 +59,13 @@
     <!-- Bottom pane (40% of the body height): run progress. Only #drawer
          scrolls internally within this pane. -->
     <div class="pane pane--log">
-      <div class="section-title">Run Log</div>
+      <div class="section-title-row">
+        <div class="section-title">Run Log</div>
+        <button id="btn-abort" class="btn-abort" title="Abort the run — whichever pass it's in" disabled>
+          <svg class="btn-abort-icon" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg>
+          Abort
+        </button>
+      </div>
       <div id="drawer" class="drawer">
         <div class="drawer-idle">Idle — nothing running</div>
       </div>

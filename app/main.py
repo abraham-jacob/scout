@@ -10,8 +10,10 @@ Routes:
   PATCH /jobs/{job_id}/status     — update job status, returns updated card
   PATCH /jobs/{job_id}/seen       — mark job as seen
   GET  /api/extension/searches    — saved searches + pacing config (browser extension)
+  POST /api/extension/reload-config — re-read profiles/config.toml, bypassing the cache
   POST /api/extension/dedupe      — job_ids not already in the DB (browser extension)
   POST /api/extension/ingest      — accept extension-scraped jobs, run Pass 2/3
+  POST /api/extension/kill        — abort the current run's Pass 2/3 subprocess
   GET  /api/extension/status      — run state as JSON (browser extension popup polling)
 """
 
@@ -81,6 +83,7 @@ _run: dict = {
     "running": False,
     "error": None,
     "done": False,
+    "killed": False,
     "started_at": None,
     "finished_at": None,
     "backend": None,
@@ -90,6 +93,15 @@ _run: dict = {
     "log": [],
 }
 _run_lock = threading.Lock()
+
+# Handle to the currently running Pass 2/3 subprocess and whether the user
+# explicitly stopped it — both live outside _run itself (not as fields on
+# it) because _run gets wholesale copy.deepcopy'd by GET endpoints
+# (extension_status, etc.) and a live subprocess.Popen isn't safely
+# deep-copyable. Guarded by the same _run_lock as _run. See
+# POST /api/extension/kill and _start_run_background's use of both.
+_current_proc: subprocess.Popen | None = None
+_kill_requested = False
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +120,14 @@ def _init_run_state(url: str | None = None, search_name: str | None = None) -> N
     search name), else "Single job" for a ``/jobs/view/<id>`` URL, else
     "Ad-hoc URL" — since the runner's ``--url`` path never emits a name for
     its one search.
+
+    Also resets _current_proc/_kill_requested (module globals, not _run
+    fields — see their definitions) so a previous run's kill request can't
+    leak into this one.
     """
+    global _current_proc, _kill_requested
+    _current_proc = None
+    _kill_requested = False
     single = bool(url) or bool(search_name)
     searches = [] if single else load_config().linkedin_searches
     if search_name:
@@ -121,6 +140,7 @@ def _init_run_state(url: str | None = None, search_name: str | None = None) -> N
         "running": True,
         "error": None,
         "done": False,
+        "killed": False,
         "started_at": datetime.now(timezone.utc),
         "finished_at": None,
         "backend": None,
@@ -259,6 +279,8 @@ def _nav_state() -> dict:
                 if step["status"] == "active":
                     label = step["label"]
         return {"text": label or "Running…", "cls": "running", "title": ""}
+    if _run["killed"]:
+        return {"text": "Stopped by user", "cls": "idle", "title": _run["error"]}
     if _run["error"]:
         return {"text": "Run failed", "cls": "error", "title": _run["error"]}
     if _run["done"]:
@@ -410,6 +432,9 @@ def _start_run_background(
         text=True,
         bufsize=1,
     )
+    global _current_proc
+    with _run_lock:
+        _current_proc = proc
 
     err_lines: list[str] = []
     err_thread = threading.Thread(
@@ -454,9 +479,15 @@ def _start_run_background(
     err_thread.join(timeout=2)
 
     with _run_lock:
+        _current_proc = None
         _run["running"] = False
         _run["finished_at"] = datetime.now(timezone.utc)
-        if timed_out["v"]:
+        if _kill_requested:
+            _run["error"] = "Stopped by user"
+            _run["killed"] = True
+            _mark_active_as_error("stopped by user")
+            logging.getLogger("scout").info("Run stopped by user (Abort)")
+        elif timed_out["v"]:
             _run["error"] = f"Timed out after {timeout_minutes} minutes"
             _mark_active_as_error("timed out")
             logging.getLogger("scout").error(
@@ -646,6 +677,30 @@ async def extension_searches() -> dict:
     }
 
 
+@app.post("/api/extension/reload-config")
+async def extension_reload_config() -> JSONResponse:
+    """Clear the cached Config and re-read profiles/config.toml, for the popup's Reload button.
+
+    load_config() is process-lifetime cached (see its docstring), so the
+    popup's saved-searches list otherwise never picks up an edited
+    config.toml without a full server restart. On a parse/validation
+    failure (e.g. the file was mid-edit), the cache is left cleared but
+    nothing here is mutated beyond that — the popup keeps showing its
+    last-known list and surfaces the error instead, rather than wiping a
+    working list over a broken edit.
+    """
+    load_config.cache_clear()
+    try:
+        config = load_config()
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "searches": [{"name": s.name, "url": s.url} for s in config.linkedin_searches],
+        "min_delay_ms": config.extension_min_delay_ms,
+        "max_delay_ms": config.extension_max_delay_ms,
+    })
+
+
 @app.post("/api/extension/dedupe")
 async def extension_dedupe(payload: dict = Body(...)) -> dict:
     """Return the job_ids from the request not already in the DB, in order.
@@ -703,6 +758,33 @@ async def extension_ingest(payload: dict = Body(...)) -> JSONResponse:
     ).start()
 
     return JSONResponse({"accepted": len(jobs), "run_id": run_id})
+
+
+@app.post("/api/extension/kill")
+async def extension_kill() -> JSONResponse:
+    """Abort the current run's Pass 2/3 subprocess, for the popup's Abort button.
+
+    Mirrors _start_run_background's existing overall-timeout watchdog —
+    same proc.kill() mechanism, already proven safe there — just triggered
+    by an explicit user action instead of a timer. A no-op (200,
+    {"killed": false}) when no subprocess is currently tracked: the run may
+    still be in Pass 1 (browser harvest, nothing server-side yet) or already
+    finished. The popup's Abort button always fires this *and* a browser-side
+    SCOUT_ABORT message together, so exactly one of them actually does
+    something in the common case; see extension/popup.js's abortRun().
+    """
+    global _kill_requested
+    with _run_lock:
+        proc = _current_proc
+        if proc is not None:
+            _kill_requested = True
+    if proc is None:
+        return JSONResponse({"killed": False})
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+    return JSONResponse({"killed": True})
 
 
 @app.get("/api/extension/status")

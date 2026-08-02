@@ -76,6 +76,112 @@ class TestExtensionSearchesRoute:
         assert body["max_delay_ms"] == 2000
 
 
+class TestExtensionReloadConfigRoute:
+    """Test POST /api/extension/reload-config."""
+
+    def test_picks_up_a_changed_config_without_a_manual_cache_clear(self, client):
+        """The route itself must bust load_config()'s lru_cache — a bare re-GET
+        of /api/extension/searches would still return the stale cached list."""
+        import app.config as app_config
+
+        # Populate the cache with the original config.
+        first = client.get("/api/extension/searches")
+        assert first.json()["searches"] == [
+            {"name": "Test Search",
+             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer"}
+        ]
+
+        # Edit the file on disk directly — deliberately not calling
+        # cache_clear() here, so only the route's own call to it can explain
+        # the updated result below.
+        app_config.CONFIG_FILE.write_text(
+            app_config.CONFIG_FILE.read_text().replace(
+                'name = "Test Search"', 'name = "Renamed Search"'
+            )
+        )
+
+        response = client.post("/api/extension/reload-config")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["searches"] == [
+            {"name": "Renamed Search",
+             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer"}
+        ]
+
+    def test_returns_pacing_alongside_searches(self, client):
+        """Response shape matches GET /api/extension/searches's."""
+        response = client.post("/api/extension/reload-config")
+
+        body = response.json()
+        assert body["min_delay_ms"] == 3000
+        assert body["max_delay_ms"] == 8000
+
+    def test_invalid_config_returns_400_with_error_message(self, client):
+        """A mid-edit/broken config.toml surfaces a friendly error, not a
+        raw traceback — the popup keeps its last-known list on this response
+        rather than clearing it (see extension/popup.js's reloadSearches)."""
+        import app.config as app_config
+        app_config.CONFIG_FILE.write_text("this is not valid toml [[[")
+
+        response = client.post("/api/extension/reload-config")
+
+        assert response.status_code == 400
+        assert "error" in response.json()
+
+
+class TestExtensionKillRoute:
+    """Test POST /api/extension/kill — the popup's Abort button's backend half."""
+
+    def test_no_op_when_nothing_running(self, client, reset_run_state):
+        """No subprocess tracked (Pass 1 only, or already finished) — a
+        harmless no-op, not an error, since the popup fires this
+        unconditionally alongside the browser-side abort."""
+        import app.main as main
+        main._current_proc = None
+
+        response = client.post("/api/extension/kill")
+
+        assert response.status_code == 200
+        assert response.json() == {"killed": False}
+
+    def test_kills_the_tracked_subprocess(self, client, reset_run_state):
+        """When a subprocess handle is tracked, kill() is called on it and
+        _kill_requested is set so _start_run_background's finally block can
+        tell a user-initiated stop apart from a crash or timeout."""
+        import app.main as main
+        fake_proc = MagicMock()
+        main._current_proc = fake_proc
+        try:
+            response = client.post("/api/extension/kill")
+
+            assert response.status_code == 200
+            assert response.json() == {"killed": True}
+            fake_proc.kill.assert_called_once()
+            assert main._kill_requested is True
+        finally:
+            main._current_proc = None
+            main._kill_requested = False
+
+    @patch("app.main.subprocess.Popen")
+    def test_start_run_background_reports_a_distinct_killed_outcome(self, mock_popen, reset_run_state):
+        """A kill's finally-block branch must win over the generic
+        non-zero-exit path (a killed process typically does exit non-zero)
+        so the popup can show "Stopped by user" instead of a scary error."""
+        import app.main as main
+        mock_popen.return_value = _make_proc(stdout_lines=[], returncode=-9)
+        main._kill_requested = True
+        try:
+            main._start_run_background("https://linkedin.com")
+
+            with _run_lock:
+                assert _run["killed"] is True
+                assert _run["error"] == "Stopped by user"
+                assert _run["done"] is False
+        finally:
+            main._kill_requested = False
+
+
 class TestExtensionDedupeRoute:
     """Test POST /api/extension/dedupe."""
 
