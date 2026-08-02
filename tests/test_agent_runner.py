@@ -534,6 +534,153 @@ class TestProcessUrlSingleJob:
         assert names["name"] == "Custom label"
 
 
+class TestProcessScrapedJobs:
+    """Test _process_scraped_jobs — the shared filter/clean/enrich tail used by
+    both run_scrape (CDP path) and process_ingested_jobs (extension path)."""
+
+    def test_filters_before_clean_and_enrich(self, monkeypatch):
+        """Deterministic filters run first; only survivors reach clean/enrich."""
+        monkeypatch.setattr(runner, "get_existing_job_ids", lambda: [])
+        cleaned = []
+        monkeypatch.setattr(runner, "clean_jobs",
+                            lambda jobs, index: cleaned.extend(j["job_id"] for j in jobs))
+        def fake_enrich(jobs, index):
+            for j in jobs:
+                j["role_type"] = "IC"
+        monkeypatch.setattr(runner, "enrich_jobs", fake_enrich)
+
+        all_jobs = {
+            "job1": {"title": "Engineer", "company": "TechCorp"},
+            "job2": {"error": "failed to scrape"},
+            "job3": {"title": "Engineer", "company": "ExcludedCorp"},
+        }
+
+        kept = runner._process_scraped_jobs(all_jobs, index=1)
+
+        assert cleaned == ["job1"]
+        assert [j["job_id"] for j in kept] == ["job1"]
+
+    def test_drops_jobs_classified_other(self, monkeypatch):
+        """A job enriched to role_type 'Other' is dropped from the kept list."""
+        monkeypatch.setattr(runner, "get_existing_job_ids", lambda: [])
+        monkeypatch.setattr(runner, "clean_jobs", lambda jobs, index: None)
+        def fake_enrich(jobs, index):
+            for j in jobs:
+                j["role_type"] = "Other"
+        monkeypatch.setattr(runner, "enrich_jobs", fake_enrich)
+
+        kept = runner._process_scraped_jobs(
+            {"job1": {"title": "Growth PM", "company": "TechCorp"}}, index=1)
+
+        assert kept == []
+
+    def test_no_survivors_skips_clean_and_enrich(self, monkeypatch):
+        """An empty filter result returns early without calling clean_jobs/enrich_jobs."""
+        monkeypatch.setattr(runner, "get_existing_job_ids", lambda: [])
+        clean_called = []
+        enrich_called = []
+        monkeypatch.setattr(runner, "clean_jobs", lambda *a, **k: clean_called.append(True))
+        monkeypatch.setattr(runner, "enrich_jobs", lambda *a, **k: enrich_called.append(True))
+
+        kept = runner._process_scraped_jobs({"job1": {"error": "failed"}}, index=1)
+
+        assert kept == []
+        assert not clean_called
+        assert not enrich_called
+
+
+class TestProcessIngestedJobs:
+    """Test process_ingested_jobs — Pass 2/3 + save on jobs the browser
+    extension already scraped, mirroring process_url() minus run_scrape()."""
+
+    def test_applies_deterministic_filters_and_saves_kept_jobs(self, monkeypatch):
+        """Excluded companies / already-known ids are dropped before save; the
+        caller-supplied run_id and search_name are threaded through to create_scrape_run."""
+        create_calls = {}
+        def fake_create_scrape_run(**kw):
+            create_calls["kw"] = kw
+            return "run-abc"
+        monkeypatch.setattr(runner, "create_scrape_run", fake_create_scrape_run)
+        monkeypatch.setattr(runner, "get_existing_job_ids", lambda: ["job-known"])
+        monkeypatch.setattr(runner, "clean_jobs", lambda jobs, index: None)
+        def fake_enrich(jobs, index):
+            for j in jobs:
+                j["role_type"] = "IC"
+        monkeypatch.setattr(runner, "enrich_jobs", fake_enrich)
+        save_calls = {}
+        def fake_save_jobs(run_id, jobs):
+            save_calls["args"] = (run_id, jobs)
+            return {"saved": len(jobs), "reposts_detected": 0}
+        monkeypatch.setattr(runner, "save_jobs", fake_save_jobs)
+
+        all_jobs = {
+            "job-new": {"title": "Engineer", "company": "TechCorp"},
+            "job-known": {"title": "Manager", "company": "TechCorp"},
+            "job-excluded": {"title": "Engineer", "company": "ExcludedCorp"},
+        }
+
+        result = runner.process_ingested_jobs(
+            all_jobs, search_name="Platform Eng",
+            url="https://www.linkedin.com/jobs/search/", run_id="run-abc")
+
+        assert result is True
+        assert create_calls["kw"]["run_id"] == "run-abc"
+        assert create_calls["kw"]["search_name"] == "Platform Eng"
+        saved_run_id, saved_jobs = save_calls["args"]
+        assert saved_run_id == "run-abc"
+        assert [j["job_id"] for j in saved_jobs] == ["job-new"]
+
+    def test_no_survivors_still_returns_true_without_saving(self, monkeypatch):
+        """Zero kept jobs is a normal, successful outcome — save_jobs is never called."""
+        monkeypatch.setattr(runner, "create_scrape_run", lambda **kw: "run-xyz")
+        monkeypatch.setattr(runner, "get_existing_job_ids", lambda: [])
+        save_called = []
+        monkeypatch.setattr(runner, "save_jobs", lambda *a, **k: save_called.append(True))
+
+        result = runner.process_ingested_jobs(
+            {"job1": {"error": "failed"}}, search_name="Extension run", url="")
+
+        assert result is True
+        assert not save_called
+
+    def test_run_id_omitted_lets_create_scrape_run_generate_one(self, monkeypatch):
+        """Without a pre-generated run_id, create_scrape_run's own default kicks in
+        (regression guard: process_ingested_jobs must not require run_id)."""
+        monkeypatch.setattr(runner, "create_scrape_run", lambda **kw: kw.get("run_id") or "generated-id")
+        monkeypatch.setattr(runner, "get_existing_job_ids", lambda: [])
+        monkeypatch.setattr(runner, "save_jobs", lambda *a, **k: {"saved": 0, "reposts_detected": 0})
+
+        result = runner.process_ingested_jobs({}, search_name="Extension run", url="")
+
+        assert result is True
+
+
+class TestSharedScrapedJobsTail:
+    """run_scrape (CDP path) and process_ingested_jobs (extension path) must
+    route through the exact same _process_scraped_jobs tail — no duplicated
+    filter/clean/enrich logic between the two entry points."""
+
+    def test_both_entry_points_call_the_same_tail_with_the_scraped_jobs(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            runner, "_process_scraped_jobs",
+            lambda all_jobs, index=1: calls.append(dict(all_jobs)) or list(all_jobs.values()))
+
+        jobs_blob = {"job1": {"title": "Engineer", "company": "TechCorp"}}
+
+        monkeypatch.setattr(runner, "run_claude", lambda *a, **k: None)
+        monkeypatch.setattr(runner, "load_downloaded_jobs", lambda run_id: jobs_blob)
+        runner.run_scrape("https://www.linkedin.com/jobs/search/", "run1", index=1)
+
+        monkeypatch.setattr(runner, "create_scrape_run", lambda **kw: "run2")
+        monkeypatch.setattr(runner, "save_jobs", lambda *a, **k: {"saved": 1, "reposts_detected": 0})
+        runner.process_ingested_jobs(jobs_blob, search_name="Extension run", url="")
+
+        assert len(calls) == 2
+        assert calls[0] == jobs_blob
+        assert calls[1] == jobs_blob
+
+
 def _fake_config(**overrides):
     """A minimal Config-like object for backend-dispatch tests."""
     base = dict(
@@ -949,3 +1096,70 @@ class TestMainSearchLoop:
         assert len(calls) == 1
         assert calls[0]["url"] == "https://www.linkedin.com/jobs/view/4440072975/"
         assert calls[0]["job_id"] == "4440072975"
+
+
+class TestMainIngestFile:
+    """Test main()'s --ingest-file routing (the browser-extension entry point)."""
+
+    def _run_main_with_ingest_file(self, monkeypatch, ingest_file,
+                                    run_id=None, search_name=None, url=None):
+        """Run main() with --ingest-file, stubbing setup/IO and recording
+        process_ingested_jobs's call."""
+        import sys
+        argv = ["runner", "--ingest-file", str(ingest_file)]
+        if run_id:
+            argv += ["--run-id", run_id]
+        if search_name:
+            argv += ["--search-name", search_name]
+        if url:
+            argv += ["--url", url]
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr(runner, "validate_setup", lambda: None)
+        monkeypatch.setattr(runner, "setup_logging",
+                            lambda: __import__("logging").getLogger("scout"))
+        monkeypatch.setattr(runner, "init_db", lambda: None)
+        monkeypatch.setattr(runner, "load_config", lambda: _fake_config())
+        calls = []
+        monkeypatch.setattr(runner, "process_ingested_jobs",
+                            lambda *a, **kw: calls.append((a, kw)) or True)
+        runner.main()
+        return calls
+
+    def test_reads_json_file_and_forwards_run_id_search_name_url(self, tmp_path, monkeypatch):
+        """The ingest file's contents become all_jobs; --run-id/--search-name/--url pass through."""
+        jobs = {"job1": {"title": "Engineer", "company": "TechCorp"}}
+        path = tmp_path / "jobs.json"
+        path.write_text(json.dumps(jobs))
+
+        calls = self._run_main_with_ingest_file(
+            monkeypatch, path, run_id="run-1", search_name="Platform Eng",
+            url="https://www.linkedin.com/jobs/search/")
+
+        assert len(calls) == 1
+        args, kwargs = calls[0]
+        assert args[0] == jobs
+        assert kwargs["run_id"] == "run-1"
+        assert kwargs["search_name"] == "Platform Eng"
+        assert kwargs["url"] == "https://www.linkedin.com/jobs/search/"
+
+    def test_deletes_ingest_file_after_reading(self, tmp_path, monkeypatch):
+        """The temp file is cleaned up after read, same as load_downloaded_jobs's blob."""
+        path = tmp_path / "jobs.json"
+        path.write_text(json.dumps({"job1": {"title": "Engineer", "company": "TechCorp"}}))
+
+        self._run_main_with_ingest_file(monkeypatch, path)
+
+        assert not path.exists()
+
+    def test_defaults_when_run_id_and_search_name_omitted(self, tmp_path, monkeypatch):
+        """--search-name defaults to 'Extension run'; --run-id defaults to None."""
+        path = tmp_path / "jobs.json"
+        path.write_text(json.dumps({}))
+
+        calls = self._run_main_with_ingest_file(monkeypatch, path)
+
+        assert len(calls) == 1
+        _, kwargs = calls[0]
+        assert kwargs["search_name"] == "Extension run"
+        assert kwargs["run_id"] is None
+        assert kwargs["url"] == ""

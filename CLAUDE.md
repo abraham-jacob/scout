@@ -10,6 +10,10 @@ each one with Claude, and stores the survivors in a local DuckDB database that a
 small FastAPI + HTMX web UI browses. It is a single-user local app (the run state
 lives in memory, not the DB) for one job seeker. Scout is open source under MIT.
 
+Scraping (Pass 1) is triggered from the **Scout browser extension** (`extension/`),
+not the web UI — the web UI is purely for browsing/filtering saved jobs now. See
+"Pass 1" below.
+
 ## Commands
 
 Dependencies are managed with **pipenv** (Python 3.12). Prefix runtime commands with
@@ -18,12 +22,15 @@ Dependencies are managed with **pipenv** (Python 3.12). Prefix runtime commands 
 ```bash
 pipenv install --dev                       # install deps
 
-# Web UI (FastAPI). Serves the job list and the "Run Scout" button.
+# Web UI (FastAPI). Serves the job list; scraping is triggered from the
+# extension popup, not this UI (see "Pass 1" below).
 pipenv run uvicorn app.main:app --reload
 
-# Run the agent pipeline directly (the web UI shells out to this same command):
-pipenv run python -m agent.runner                  # scrape every configured [[linkedin_searches]] entry
-pipenv run python -m agent.runner --url <linkedin_url>   # scrape one ad-hoc URL, ignoring config
+# Run the agent pipeline directly. --url uses the old CDP browser-scrape path
+# (kept as a fallback); --ingest-file is what the extension's ingest endpoint
+# spawns behind the scenes, not something you'd normally invoke by hand.
+pipenv run python -m agent.runner                  # scrape every configured [[linkedin_searches]] entry (CDP path)
+pipenv run python -m agent.runner --url <linkedin_url>   # scrape one ad-hoc URL, ignoring config (CDP path)
 
 # Initialise / inspect the DuckDB schema
 pipenv run python -m app.database
@@ -36,35 +43,110 @@ pipenv run pytest -m unit                  # by marker (unit / integration)
 pipenv run unit-tests                      # full suite with junit + HTML coverage
 ```
 
+**Loading the extension:** `chrome://extensions` → enable Developer mode →
+**Load unpacked** → select `extension/`. Requires the web server running
+(above) — the extension talks to it over `http://127.0.0.1:8000`.
+
 ## Architecture
 
 The system is **three passes orchestrated by `agent/runner.py`** — a browser
 scrape (Pass 1) and two headless passes, description cleaning (Pass 2) and
-per-job enrichment/scoring (Pass 3) — launched as a subprocess by the web UI.
-Read `agent/runner.py`'s module docstring first — it is the map for the whole
+per-job enrichment/scoring (Pass 3). Passes 2/3 always run as a
+`python -m agent.runner` subprocess spawned by the web UI
+(`app/main.py::_start_run_background`); Pass 1 is acquired by the **Scout
+browser extension** (default) or the older CDP-driven path (fallback, kept
+until the extension is proven in longer real-world use). Read
+`agent/runner.py`'s module docstring first — it is the map for the whole
 pipeline, and its Pass 1/2/3 numbering is authoritative.
 
-### Pass 1 — browser scrape (Haiku), `agent/scrape_prompt.md` / `agent/scrape_single_prompt.md`
-`runner.py` spawns `claude --print --chrome` on Haiku with `scrape_prompt.md`. That
-sub-agent does **no filtering**: it hits LinkedIn's internal **Voyager job-postings
-API** via `javascript_tool` (not the accessibility tree, not card-clicking) to pull
-every field for every job on page 1, including virtualized cards that never render.
-A single LinkedIn job URL (a `/jobs/view/<id>` link, or a search URL's
-`currentJobId` toggled to "just this job" in the UI) is detected by
-`runner.extract_single_job_id()` and routed to `scrape_single_prompt.md`
-instead — the same Voyager fetch for one job ID directly, skipping the
-search-results DOM discovery entirely since the job ID is already known.
+### Pass 1 — browser scrape
 
-The critical constraint: each job description is 5–13 KB, and the Chrome extension's
-**privacy filter blocks large `javascript_tool` return values**. So the sub-agent
-writes the whole batch to `window.__jobs` and blob-**downloads** it as
-`scout_<run_id>.json` to the browser's Downloads folder. Only a one-line status
-comes back through the extension. `runner.py::load_downloaded_jobs` then polls the
-Downloads folder (`download_dir()`, config-overridable) for that file, reads it, and
-deletes it. The blob download is load-bearing; do not try to route descriptions back
-through the tool return value. There is deliberately **no shell step** — the sub-agent
-does not move the file — so the handoff works identically on Windows/macOS/Linux
-(the poll replaces the wait-loop the agent used to run in bash).
+**Default: the Scout browser extension (`extension/`).** Its content script
+(`extension/content.js`) runs inside the user's own authenticated LinkedIn
+tab — no CDP protocol traffic, no `navigator.webdriver` flag, and Voyager API
+calls are same-origin with real session cookies, mechanically identical to
+what LinkedIn's own SPA does when a human browses. This replaced the CDP path
+below because CDP automation kept triggering LinkedIn's "verify you're
+human" challenge.
+
+- **Harvest**: `content.js` waits for the results to render (a
+  `MutationObserver` quiet-period, not a fixed sleep — LinkedIn renders
+  progressively), then pulls every job id off the page. Two DOM variants,
+  handled by one combined selector (see "LinkedIn scraping notes" below).
+- **Dedupe**: ids are POSTed to `POST /api/extension/dedupe`
+  (`app/main.py`), which diffs against `agent.tools.get_existing_job_ids()`
+  and returns only the unseen ones — this is the biggest lever on request
+  volume.
+- **Fetch**: unlike the old CDP prompt's `Promise.all()` burst, the
+  extension fetches new jobs **sequentially with random jitter**
+  (`[extension] min_delay_ms`/`max_delay_ms` in `profiles/config.toml`,
+  served by `GET /api/extension/searches`) — a burst of parallel requests
+  doesn't look like a human clicking through jobs. Any `999`/`401`/`403`
+  response (LinkedIn's block/auth-loss signals) **halts the whole run
+  immediately**, no retry-with-backoff — retrying into a block only
+  escalates throttling into flagging. A plain `404` is a normal per-job skip
+  (job removed between page-load and fetch); other failures get one retry
+  before being left as an error entry. On halt, whatever was already fetched
+  is still ingested — partial progress is never thrown away — and the
+  remaining pending ids are persisted to `chrome.storage.local` for the
+  popup's Resume button.
+- **Ingest**: `POST /api/extension/ingest` (`app/main.py`) writes the
+  `{job_id: {...}}` batch to a temp file and spawns
+  `python -m agent.runner --ingest-file <path> --run-id <uuid> --search-name ... --url ...`
+  — the *same* subprocess/stdout-parsing mechanism
+  `_start_run_background` already uses, so extension-triggered progress
+  flows through the existing `SCOUT_PROGRESS`/`_run` state for free. In
+  `runner.py`, `--ingest-file` routes to `process_ingested_jobs()`, which is
+  `process_url()` minus the scrape: deterministic filters → clean → enrich →
+  save, via the same `_process_scraped_jobs()`/`_save_scraped_jobs()` tail
+  the CDP path uses, so extension-sourced and CDP-sourced jobs are processed
+  identically.
+- **Popup** (`extension/popup.html`/`.js`/`.css`) is the trigger/monitor UI:
+  Saved Searches (from `GET /api/extension/searches`), Custom Search (a
+  pasted URL or job id — classified client-side in `popup.js`, ported from
+  `extract_single_job_id`/`resolve_scan_url` below, since this is
+  scrape-routing logic that doesn't need a backend round-trip), and Scrape
+  Current Page. Progress during the harvest is live-only
+  (`chrome.runtime.sendMessage` broadcasts from `content.js`, not
+  persisted); once ingest fires, the popup switches to polling
+  `GET /api/extension/status` and streams the backend's own `_run["log"]`
+  lines, which *do* survive a popup close/reopen. `background.js` is a thin
+  relay only (talks to `localhost` and manages tab creation for
+  saved-search/resume runs) — the harvest loop itself must live in the
+  content script, not the background service worker, since MV3 workers are
+  killed after ~30s idle and a multi-minute jittered loop needs a
+  tab-lifetime context.
+- **Halt/resume state**: a single overwritable `chrome.storage.local` slot
+  (`scout_run_state`) holds `{status: "running", ...}` (written the instant
+  any harvest starts — this is what stops a reopened popup from looking idle
+  and re-enabling every button mid-scrape) or `{status: "halted", ...}`.
+  Starting a fresh Run always overwrites it; Resume reads/updates it in
+  place; any clean finish or unexpected error clears it.
+
+**Fallback: CDP-driven scrape (Haiku), `agent/scrape_prompt.md` /
+`agent/scrape_single_prompt.md`.** `runner.py` spawns `claude --print --chrome`
+on Haiku with `scrape_prompt.md`. That sub-agent does **no filtering**: it
+hits the same Voyager API via `javascript_tool` to pull every field for
+every job on page 1, including virtualized cards that never render. A
+single LinkedIn job URL (a `/jobs/view/<id>` link, or a search URL's
+`currentJobId` toggled to "just this job") is detected by
+`runner.extract_single_job_id()` and routed to `scrape_single_prompt.md`
+instead. Not surfaced in the web UI anymore (no button calls
+`POST /scout/run`), but left callable directly (`--url`, or no args to loop
+`[[linkedin_searches]]`) — don't delete this path.
+
+The critical constraint on this path: each job description is 5–13 KB, and the
+Chrome extension's **privacy filter blocks large `javascript_tool` return
+values**. So the sub-agent writes the whole batch to `window.__jobs` and
+blob-**downloads** it as `scout_<run_id>.json` to the browser's Downloads
+folder. Only a one-line status comes back through the extension.
+`runner.py::load_downloaded_jobs` then polls the Downloads folder
+(`download_dir()`, config-overridable) for that file, reads it, and deletes
+it. The blob download is load-bearing; do not try to route descriptions back
+through the tool return value. There is deliberately **no shell step** — the
+sub-agent does not move the file — so the handoff works identically on
+Windows/macOS/Linux (the poll replaces the wait-loop the agent used to run
+in bash).
 
 ### Between passes — deterministic filters
 `apply_deterministic_filters()` cheaply drops jobs before spending any LLM call:
@@ -124,12 +206,18 @@ start: the roles config must load, `profiles/resume.md` must exist, and a role's
 referenced profile file must exist (roles may omit `profile` to score on the resume
 alone).
 
-### Progress events → web UI
+### Progress events → web UI + extension popup
 `runner.py` emits `SCOUT_PROGRESS <json>` sentinel lines on stdout. `app/main.py`
 reads the subprocess stdout line by line and folds those events into the in-memory
-`_run` dict (`_apply_event`), which renders the live "run drawer" partial that HTMX
-polls at `GET /scout/status`. Event `key`s in `runner.py`'s `emit()` calls must stay
-in sync with `GLOBAL_STEPS` / `SEARCH_STEPS` in `app/main.py`.
+`_run` dict (`_apply_event`), same as before. Two different things read `_run` now:
+`GET /scout/status` renders `partials/run_banner.html`, a lightweight "Scout is
+running…"/error strip (the web UI no longer has a full drawer — it doesn't trigger
+runs anymore, so it just needs to not look misleading if a run is happening
+elsewhere while it's open); `GET /api/extension/status` returns the same `_run`
+snapshot as JSON, including the granular per-job `_run["log"]` lines, for the
+extension popup to poll and render in detail (see "Pass 1" above). Event `key`s in
+`runner.py`'s `emit()` calls must stay in sync with `GLOBAL_STEPS` / `SEARCH_STEPS`
+in `app/main.py`.
 
 ### Data layer
 `app/database.py` — DuckDB at `data/scout.duckdb`, two tables (`scrape_runs`, `jobs`).
@@ -229,9 +317,13 @@ and `pipenv run mkdocs serve`.
   likely than a real regression. Check in an incognito window or with a
   cache-busting fetch before debugging further.
 
-## LinkedIn scraping notes (in `scrape_prompt.md`)
+## LinkedIn scraping notes (in `scrape_prompt.md` and `extension/content.js`)
 
-Two page structures exist and the Step-1 JS handles both: `/search-results/` uses the
-`componentkey` attribute; `/search/` (and `/comm/jobs/search` redirects) uses
+Two page structures exist and the harvest JS handles both — in `scrape_prompt.md`'s
+Step 1 for the CDP fallback, and ported verbatim into `extension/content.js`'s
+`harvestJobIds()` for the extension path: `/search-results/` uses the `componentkey`
+attribute; `/search/` (and `/comm/jobs/search` redirects, which always land on
+`/jobs/search/` before a content script would see them) uses
 `data-occludable-job-id`. The Voyager API is the sole data source — salary is not in
-the API and is regex-parsed out of the description text.
+the API and is regex-parsed out of the description text (`salaryFromText()` in both
+places).

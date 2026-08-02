@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Scout</title>
+  <script src="theme-init.js"></script>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="header">
+    <svg class="brand-logo" width="36" height="44" viewBox="0 0 450 557" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="77,154 77,270 219,186 450,324 449,258 218,0" fill="#81BBDF"/>
+      <polygon points="239,313 449,440 449,350 314,269" fill="#3D7DB1"/>
+      <polygon points="292,256 217,211 76,297 76,386" fill="#3D7DB1"/>
+      <polygon points="238,429 449,557 448,465 313,384" fill="#1A3C63"/>
+      <polygon points="55,180 0,247 0,548 291,372 217,327 56,419" fill="#265484"/>
+    </svg>
+    <div class="brand">
+      <span class="brand-name">Scout</span>
+      <div id="conn-status" class="conn-status conn-status--pending">Checking Scout server…</div>
+    </div>
+    <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+    </button>
+  </header>
+
+  <main id="content" class="content">
+    <!-- Top pane (60% of the body height): everything you can click. Only
+         the saved-search list scrolls internally within this pane — Custom
+         Search and Scrape Current Page stay pinned and always visible. -->
+    <div class="pane pane--controls">
+      <div class="section section--grow">
+        <div class="section-title">Saved Searches</div>
+        <div id="saved-searches" class="search-list"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Custom Search</div>
+        <div class="custom-row">
+          <input id="custom-url" type="text" placeholder="Paste a URL or job ID…" />
+          <button id="btn-custom" class="btn" disabled>Run</button>
+        </div>
+      </div>
+
+      <button id="btn-current" class="btn btn--full" disabled>
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0Z"/><path d="M12 7v5l3 3"/></svg>
+        Scrape Current Page
+      </button>
+      <div id="current-page-hint" class="hint">Checking the current tab…</div>
+    </div>
+
+    <!-- Bottom pane (40% of the body height): run progress. Only #drawer
+         scrolls internally within this pane. -->
+    <div class="pane pane--log">
+      <div class="section-title">Run Log</div>
+      <div id="drawer" class="drawer">
+        <div class="drawer-idle">Idle — nothing running</div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    Made with <span class="footer-heart">♥</span> for job seekers ·
+    <a href="https://github.com/abraham-jacob/scout" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+
+  <div id="offline" class="offline hidden">
+    <p>Scout isn't running.</p>
+    <p class="offline-hint">Start it with <code>pipenv run uvicorn app.main:app</code></p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

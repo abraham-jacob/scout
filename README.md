@@ -21,7 +21,7 @@
 
 📖 **[Full documentation](https://abraham-jacob.github.io/scout/)** — setup, configuration reference, architecture, and troubleshooting.
 
-LinkedIn job search results are a firehose: dozens of postings a day, half of them reposts, mismatches, or roles you already applied to. Scout drinks from the firehose for you. It drives a real Chrome session to scrape **every** job behind each of your saved LinkedIn searches (including the ones LinkedIn never renders), cleans the boilerplate out of each description, classifies and scores every role against *your* resume and criteria, and files the survivors into a local database with a clean web UI — each job tagged, summarized, and scored out of 100.
+LinkedIn job search results are a firehose: dozens of postings a day, half of them reposts, mismatches, or roles you already applied to. Scout drinks from the firehose for you. A companion browser extension scrapes **every** job behind each of your saved LinkedIn searches, right from your own logged-in session (including the ones LinkedIn never renders), then Scout cleans the boilerplate out of each description, classifies and scores every role against *your* resume and criteria, and files the survivors into a local database with a clean web UI — each job tagged, summarized, and scored out of 100.
 
 Everything runs on your machine. Your resume, your criteria, and your job-search data never leave it — except as prompts to the LLM you choose (Claude API, or a fully local model via Ollama).
 
@@ -57,7 +57,7 @@ I built Scout during my own job search. Every morning started with a stack of Li
 
 Scout is three LLM passes with cheap deterministic filtering in between, orchestrated by [`agent/runner.py`](agent/runner.py):
 
-1. **Pass 1 — Browser scrape.** A Claude Haiku sub-agent drives your real Chrome session (via the [Claude in Chrome](https://claude.com/chrome) extension) to LinkedIn and pulls every job on the alert's first page through LinkedIn's internal Voyager API — title, company, full description, apply URL, applied status, and whether the posting is still live. No card-clicking, no screen-scraping heuristics, no missed virtualized cards.
+1. **Pass 1 — Browser scrape.** The companion **Scout browser extension** scrapes every job on the alert's first page through LinkedIn's internal Voyager API, from inside your own logged-in Chrome tab — title, company, full description, apply URL, applied status, and whether the posting is still live. No card-clicking, no screen-scraping heuristics, no missed virtualized cards, and no separate automated-browser session — it's your real session, so there's nothing for LinkedIn to flag as a bot.
 
 2. **Deterministic filters.** Before spending another token, Scout drops jobs that are already in the database, already applied to, closed, or from companies you've excluded. Filtering is free; LLM calls aren't.
 
@@ -65,9 +65,7 @@ Scout is three LLM passes with cheap deterministic filtering in between, orchest
 
 4. **Pass 3 — Enrich & score.** One parallel LLM call per job classifies it into one of *your* configured role types (or drops it as `Other`), writes a 2–4 sentence summary, tags it (workplace, salary, stack, team size…), and scores it against your resume, per-role profile, and hard criteria — with dealbreakers capping the score. Results land in DuckDB; the web UI serves them with filtering, search, and an application-status pipeline.
 
-The run drawer streams the whole pipeline live — per-pass timers, live progress counts, which model is doing what, and a scrolling event log of every job's outcome:
-
-<img src="docs/images/run_drawer.gif" alt="Live run drawer: three passes with timers, progress counts, and a streaming event log" width="100%">
+The extension's popup streams Pass 1 live as it happens — which job it's fetching, live progress counts — then keeps streaming once Pass 2/3 pick up server-side, right through to a saved-jobs summary. *(Screenshot coming once the extension settles from a few more days of real use.)*
 
 <br>
 
@@ -109,9 +107,7 @@ Every card links straight to the fastest path to apply — the company's own sit
 <img src="docs/images/feature_links_to_apply.png" alt="Apply on company site and LinkedIn links on a job card" width="100%">
 
 ### 🖥️ Use Claude, or bring your own OpenAI-compatible model
-Run the description-cleaning and enrichment passes on the Claude API for best-in-class quality, or point them at any OpenAI-compatible endpoint (Ollama, etc.) for a fully free, fully private run — no job description ever leaves your machine. Switch backends with one line in `profiles/config.toml`; the run drawer always shows exactly which backend and model did the work.
-
-<img src="docs/images/feature_backend_toggle.gif" alt="The run drawer's backend badge switching between Claude and a self-hosted model" width="100%">
+Run the description-cleaning and enrichment passes on the Claude API for best-in-class quality, or point them at any OpenAI-compatible endpoint (Ollama, etc.) for a fully free, fully private run — no job description ever leaves your machine. Switch backends with one line in `profiles/config.toml`.
 
 <br>
 
@@ -123,9 +119,9 @@ Scout is a personal, single-user tool. It expects:
 |---|---|
 | **Python 3.12** + [pipenv](https://pipenv.pypa.io/) | Runtime & dependency management |
 | **Git** | To clone the repo |
-| **Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
-| **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at an OpenAI-compatible model |
+| **Google Chrome** with the **Scout extension** (`extension/`, loaded unpacked — see Quick Start) | Pass 1 runs from your real, logged-in browser session |
 | **A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |
+| **[Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Passes 2–3 run on it by default; not needed if you point them at an OpenAI-compatible model instead |
 | *(Optional)* An OpenAI-compatible server ([Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on that model: free and private |
 
 <br>
@@ -150,7 +146,7 @@ name = "IC"
 definition = "Senior individual contributor. Titles like Staff/Principal Engineer."
 
 [[linkedin_searches]]
-name = "My Search"              # short alias shown in the run drawer/logs
+name = "My Search"              # short alias shown in the extension popup/logs
 url = "https://www.linkedin.com/jobs/search-results/?keywords=..."   # copied from LinkedIn
 
 [filters]
@@ -173,15 +169,17 @@ Then add your resume as `profiles/resume.md` (plus optional per-role profiles an
 
 **2. Add your LinkedIn searches.** On LinkedIn, set up the job search(es) you want Scout to track. Copy each search's URL straight from your browser's address bar and add it to `[[linkedin_searches]]` in `profiles/config.toml` with a short `name` alias — no Gmail, no OAuth, no API keys.
 
-**3. Prepare Chrome.** Install the Claude in Chrome extension, be logged into LinkedIn, and turn **off** *Settings → Downloads → "Ask where to save each file before downloading"* (Pass 1 hands off scraped data through a browser download — a save dialog would stall the agent).
+**3. Load the extension.** In Chrome, go to `chrome://extensions`, enable **Developer mode** (top right), click **Load unpacked**, and select the `extension/` folder from your clone. Make sure you're logged into LinkedIn in that same browser.
 
 **4. Run.**
 
 ```bash
-pipenv run uvicorn app.main:app        # web UI at http://127.0.0.1:8000
+pipenv run uvicorn app.main:app        # web UI at http://127.0.0.1:8000 — job list + the API the extension talks to
 ```
 
-Click **▶ Run Scout**. Or run the pipeline directly from the terminal:
+With the server running, click the Scout icon in Chrome's toolbar. The popup lists your configured searches (each with a **Run** button), a **Custom Search** box (paste any LinkedIn search/job URL or job id), and **Scrape Current Page** (harvests whatever LinkedIn jobs page you're already on). Progress streams live in the popup through all three passes.
+
+You can still run the pipeline directly from the terminal too — this uses the older CDP-driven scrape path, kept as a fallback:
 
 ```bash
 pipenv run python -m agent.runner                   # scrape every configured search
@@ -192,7 +190,7 @@ pipenv run python -m agent.runner --url <linkedin_search_url>   # scrape one ad-
 
 ## 🔌 OpenAI-compatible Backend
 
-Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any **OpenAI-compatible** server instead of the Claude API: [Ollama](https://ollama.com) running on your own box is the common case (free, fully private), but the same config also works with a remote OpenAI-compatible API (e.g. [Kimi](https://www.moonshot.ai/)) if you'd rather not run a server yourself. Pass 1 always runs on Claude, because it's an agentic browser task a text model can't do.
+Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any **OpenAI-compatible** server instead of the Claude API: [Ollama](https://ollama.com) running on your own box is the common case (free, fully private), but the same config also works with a remote OpenAI-compatible API (e.g. [Kimi](https://www.moonshot.ai/)) if you'd rather not run a server yourself. Pass 1 doesn't touch an LLM at all — it's plain JavaScript in the browser extension — so this setting has no effect on it either way.
 
 ```toml
 [llm]
@@ -223,7 +221,7 @@ All user configuration lives in `profiles/config.toml`, validated loudly at star
 
 ## 🔧 Engineering Notes
 
-A few of the parts that were genuinely interesting to build: getting 13 KB job descriptions out of a browser extension that blocks large tool returns, scraping LinkedIn's internal API instead of its DOM, and spending LLM tokens only where judgment actually lives. Full writeup in the [Architecture docs](https://abraham-jacob.github.io/scout/architecture/).
+A few of the parts that were genuinely interesting to build: a browser extension that scrapes from *inside* your real session instead of driving an automated one — no CDP fingerprint, sequential jittered requests instead of a burst, hard-halt-and-resume the moment LinkedIn pushes back — scraping LinkedIn's internal API instead of its DOM, and spending LLM tokens only where judgment actually lives. (An earlier version drove Chrome via CDP automation and got flagged; the extension rewrite fixed that.) Full writeup in the [Architecture docs](https://abraham-jacob.github.io/scout/architecture/).
 
 <br>
 
@@ -250,9 +248,9 @@ With the Claude backend, a run costs what the models cost: Haiku for the scrape 
 
 ## ⚠️ Limitations & Responsible Use
 
-- **Personal use, by design.** Scout automates *your own* browsing of *your own* saved searches, in *your own* logged-in Chrome session — one page of results per configured search, no crawling, no scale. Automated access may still conflict with LinkedIn's Terms of Service; understand them and use your judgment. This project is not affiliated with LinkedIn.
+- **Personal use, by design.** Scout automates *your own* browsing of *your own* saved searches, in *your own* logged-in Chrome session — one page of results per configured search, no crawling, no scale, and requests to LinkedIn go out slowly and one at a time (jittered, not a burst) rather than as fast as possible. Automated access may still conflict with LinkedIn's Terms of Service; understand them and use your judgment. This project is not affiliated with LinkedIn.
 - **Single-user, local-only.** The web UI has no authentication and binds to localhost; run state lives in memory. Don't expose it to a network.
-- **The browser is busy during Pass 1.** The scrape drives a real Chrome tab; grab a coffee — the run drawer will tell you exactly what's happening.
+- **A scrape takes a few minutes, by design.** Requests are deliberately paced, not fired as fast as possible — the extension popup shows exactly what's happening the whole time. Saved-search runs open a background tab rather than taking over your active one, so you can keep browsing while it works.
 
 <br>
 

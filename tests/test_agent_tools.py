@@ -57,6 +57,22 @@ class TestCreateScrapeRun:
         mock_conn.execute.assert_called_once()
         mock_conn.close.assert_called_once()
 
+    @patch('agent.tools.get_connection')
+    def test_create_scrape_run_with_pre_generated_id(self, mock_get_conn):
+        """A caller-supplied run_id (the extension ingest path) is used verbatim."""
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+
+        run_id = create_scrape_run(
+            search_name="Extension run",
+            linkedin_url="https://linkedin.com/jobs",
+            run_id="11111111-1111-1111-1111-111111111111",
+        )
+
+        assert run_id == "11111111-1111-1111-1111-111111111111"
+        inserted_args = mock_conn.execute.call_args[0][1]
+        assert inserted_args[0] == "11111111-1111-1111-1111-111111111111"
+
 
 class TestGetExistingJobIds:
     """Test retrieving existing job IDs from database."""

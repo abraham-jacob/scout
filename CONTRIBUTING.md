@@ -49,9 +49,10 @@ git clone https://github.com/abraham-jacob/scout.git && cd scout
 pipenv install --dev
 ```
 
-You'll need your own `profiles/config.toml`, `profiles/resume.md`, Gmail OAuth
-credentials, and a logged-in Chrome/LinkedIn session to run the app
-end-to-end — see the [Configuration guide](https://abraham-jacob.github.io/scout/getting-started/).
+You'll need your own `profiles/config.toml`, `profiles/resume.md`, a
+logged-in Chrome/LinkedIn session, and the Scout extension loaded unpacked
+(`chrome://extensions` → Developer mode → Load unpacked → `extension/`) to
+run the app end-to-end — see the [Configuration guide](https://abraham-jacob.github.io/scout/getting-started/).
 None of that is required just to read the code, run the test suite, or work
 on a non-pipeline change (e.g. the web UI, database layer, or config
 parsing).
@@ -74,9 +75,11 @@ parsing).
 - Read the module docstring at the top of
   [`agent/runner.py`](https://github.com/abraham-jacob/scout/blob/main/agent/runner.py)
   before touching the pipeline — it's the map for the whole three-pass
-  architecture (Pass 1 browser scrape, Pass 2 clean, Pass 3 enrich) and the
-  reasoning behind several non-obvious design choices (the blob-download
-  handoff, Voyager-API-not-DOM scraping, prompt-cache warming).
+  architecture (Pass 1 browser scrape — the `extension/` Chrome extension by
+  default, with an older CDP-driven path kept as a fallback — Pass 2 clean,
+  Pass 3 enrich) and the reasoning behind several non-obvious design choices
+  (Voyager-API-not-DOM scraping, the CDP path's blob-download handoff,
+  prompt-cache warming).
 
 ## Testing
 

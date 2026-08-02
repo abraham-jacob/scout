@@ -24,9 +24,15 @@ def _unwrap_linkedin_redirect(url: str | None) -> str | None:
 def create_scrape_run(
     search_name: str,
     linkedin_url: str,
+    run_id: str | None = None,
 ) -> str:
-    """Insert a new scrape_run row and return its run_id."""
-    run_id = str(uuid.uuid4())
+    """Insert a new scrape_run row and return its run_id.
+
+    Accepts an optional pre-generated ``run_id`` so a caller (e.g. the
+    extension ingest endpoint) can hand out the id before the row exists and
+    have it match once the row is written. Generates one when omitted.
+    """
+    run_id = run_id or str(uuid.uuid4())
     conn = get_connection()
     conn.execute(
         """
