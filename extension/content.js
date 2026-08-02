@@ -13,6 +13,17 @@
 
 const RENDER_QUIET_MS = 500;
 const RENDER_TIMEOUT_MS = 15000;
+// The /jobs/search/ DOM variant (data-occludable-job-id) virtualizes the
+// results list — LinkedIn only mounts ~7 cards' worth of DOM up front and
+// mounts the rest in further bursts as it keeps hydrating, with gaps between
+// bursts that can exceed RENDER_QUIET_MS. A single quiet-period wait can
+// therefore settle after just the first burst. HARVEST_* drives a follow-up
+// poll loop that nudges scroll (in case mounting is scroll-triggered) and
+// keeps re-harvesting until the id count stops growing for two checks in a
+// row, so a mid-render pause isn't mistaken for "done".
+const HARVEST_POLL_MS = 700;
+const HARVEST_STABLE_ROUNDS = 2;
+const HARVEST_MAX_MS = 20000;
 const WORKPLACE = { "1": "On-site", "2": "Remote", "3": "Hybrid" };
 
 // Single overwritable chrome.storage.local slot tracking the current/last
@@ -42,8 +53,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 /**
  * Run the full Pass 1 pipeline against the current page: wait for the
- * results to render, harvest job ids from the DOM, dedupe against the
- * backend, then fetch+ingest every new job (see fetchAndIngest).
+ * results to render, harvest job ids from the DOM (polling until the count
+ * is stable — see harvestJobIdsUntilStable), dedupe against the backend,
+ * then fetch+ingest every new job (see fetchAndIngest).
  */
 async function runHarvest(searchName) {
   try {
@@ -51,7 +63,7 @@ async function runHarvest(searchName) {
     report({ phase: "waiting" });
     await waitForRender();
 
-    const jobIds = harvestJobIds();
+    const jobIds = await harvestJobIdsUntilStable();
     report({ phase: "harvested", count: jobIds.length });
     if (jobIds.length === 0) {
       await clearRunState();
@@ -252,6 +264,62 @@ function harvestJobIds() {
     ...[...document.querySelectorAll("[data-occludable-job-id]")]
       .map((el) => el.getAttribute("data-occludable-job-id")),
   ])];
+}
+
+/**
+ * Find the nearest scrollable ancestor of ``el`` (an element whose overflow-y
+ * allows scrolling and that actually has overflow content), falling back to
+ * the document's own scrolling element. Deliberately selector-free — not
+ * tied to any of LinkedIn's own CSS class names, which change often — so it
+ * works whichever panel actually owns the results list's scroll.
+ */
+function findScrollableAncestor(el) {
+  let node = el && el.parentElement;
+  while (node && node !== document.body) {
+    const style = getComputedStyle(node);
+    if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
+/**
+ * Nudge whichever panel holds the results list to its current bottom (plus
+ * the window itself, as a fallback) — in case a virtualized list only mounts
+ * further cards once they're scrolled into view.
+ */
+function scrollResultsPanel() {
+  const cards = document.querySelectorAll(
+    '[componentkey^="job-card-component-ref-"], [data-occludable-job-id]'
+  );
+  const last = cards[cards.length - 1];
+  const container = findScrollableAncestor(last);
+  container.scrollTo({ top: container.scrollHeight });
+  window.scrollTo({ top: document.body.scrollHeight });
+}
+
+/**
+ * Harvest job ids, then keep re-harvesting (with a scroll nudge each round)
+ * until the count holds steady for HARVEST_STABLE_ROUNDS consecutive checks
+ * or HARVEST_MAX_MS elapses — see the HARVEST_* constants for why a single
+ * quiet-period wait isn't sufficient on the virtualized DOM variant.
+ */
+async function harvestJobIdsUntilStable() {
+  const deadline = Date.now() + HARVEST_MAX_MS;
+  let ids = harvestJobIds();
+  let stableStreak = 0;
+
+  while (Date.now() < deadline && stableStreak < HARVEST_STABLE_ROUNDS) {
+    scrollResultsPanel();
+    await sleep(HARVEST_POLL_MS);
+    const next = harvestJobIds();
+    stableStreak = next.length === ids.length ? stableStreak + 1 : 0;
+    ids = next;
+  }
+
+  return ids;
 }
 
 /**
