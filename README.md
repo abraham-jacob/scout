@@ -8,6 +8,7 @@
 </div>
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Release](https://img.shields.io/github/v/release/abraham-jacob/scout?include_prereleases&sort=semver)](https://github.com/abraham-jacob/scout/releases)
 [![Tests](https://github.com/abraham-jacob/scout/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/abraham-jacob/scout/actions/workflows/tests.yml)
 [![Coverage](https://raw.githubusercontent.com/abraham-jacob/scout/badges/coverage.svg)](https://github.com/abraham-jacob/scout/actions/workflows/tests.yml)
 [![Branch protection: enabled](https://img.shields.io/badge/branch%20protection-enabled-blue.svg)](https://github.com/abraham-jacob/scout/branches)
@@ -65,7 +66,9 @@ Scout is three LLM passes with cheap deterministic filtering in between, orchest
 
 4. **Pass 3 — Enrich & score.** One parallel LLM call per job classifies it into one of *your* configured role types (or drops it as `Other`), writes a 2–4 sentence summary, tags it (workplace, salary, stack, team size…), and scores it against your resume, per-role profile, and hard criteria — with dealbreakers capping the score. Results land in DuckDB; the web UI serves them with filtering, search, and an application-status pipeline.
 
-The extension's popup streams Pass 1 live as it happens — which job it's fetching, live progress counts — then keeps streaming once Pass 2/3 pick up server-side, right through to a saved-jobs summary. *(Screenshot coming once the extension settles from a few more days of real use.)*
+The extension's popup streams Pass 1 live as it happens — which job it's fetching, live progress counts — then keeps streaming once Pass 2/3 pick up server-side, right through to a saved-jobs summary.
+
+<img src="docs/images/run_drawer.gif" alt="The Scout extension popup streaming a run: live Pass 1 progress, then Pass 2/3 enrichment, through to a saved-jobs summary" width="100%">
 
 <br>
 

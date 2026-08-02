@@ -19,26 +19,41 @@ doesn't have to reverse-engineer them from the diff history.
 
 ## Workflow
 
-`main` is protected: it requires a pull request to merge, force-pushes are
-blocked, and the branch can't be deleted. There is no situation where you
-should push directly to `main`.
+Scout uses a release-branch model, not plain trunk-based development.
+`release/x.y.z` — not `main` — is the **default branch** and the active
+integration branch for the in-progress release: all feature and bugfix work
+PRs into it throughout the cycle. `main` only moves once, at the very end of
+a cycle, when the finished `release/x.y.z` branch is merged in and tagged
+(see "Releasing" below). Both `main` and every `release/*` branch are
+protected: a pull request is required to merge, force-pushes are blocked,
+and neither can be deleted directly (a spent release branch is deleted
+explicitly as the last step of the Releasing checklist, not by a stray
+force-push or admin override). The one exception to "work lands on
+`release/x.y.z`, not `main`" is a **hotfix** — an urgent fix to
+already-shipped code that can't wait for the current release cycle to
+finish, which branches from and merges directly to `main`; see "Hotfixes"
+below.
 
-Every push and every PR against `main` automatically runs the test suite via
+Every push and every PR against `main` or a `release/*` branch automatically
+runs the test suite via
 [GitHub Actions](https://github.com/abraham-jacob/scout/blob/main/.github/workflows/tests.yml)
 — that's the "Tests" and "Coverage" badges at the top of the README. A PR
 with a failing run is visible immediately in the PR's checks tab.
 
-1. **Branch from `main`.** Never commit on `main` directly.
+1. **Branch from the current release branch**, not `main` — check
+   `git branch --show-current` on a fresh clone/pull to confirm which
+   `release/x.y.z` is currently checked out as default.
    ```bash
-   git checkout main && git pull
+   git checkout release/x.y.z && git pull
    git checkout -b your-feature-name
    ```
 2. **Make focused commits.** Prefer several small, well-scoped commits over one
    giant one — it makes review (and future `git blame`) much easier.
 3. **Run the test suite locally before opening a PR** (see below) — don't
    rely on CI to catch something you could've caught in ten seconds.
-4. **Open a PR against `main`.** Describe *why* the change is needed, not just
-   what changed — the diff already shows the what.
+4. **Open a PR against the current `release/x.y.z` branch**, not `main`.
+   Describe *why* the change is needed, not just what changed — the diff
+   already shows the what.
 5. **Keep the PR focused.** One logical change per PR. If you notice something
    unrelated that needs fixing, file it separately.
 
@@ -129,6 +144,99 @@ Explain the *why* — the motivation or the bug being fixed — not just a
 restatement of the diff. Keep the subject line short; use the body for
 context if it's needed. Match the tone/format of existing history
 (`git log --oneline`) rather than inventing a new convention.
+
+## Releasing
+
+Scout uses `x.y.z` [semantic versioning](https://semver.org/). There's no
+publish step (no package registry, no Chrome Web Store) — a release is just
+a git tag plus a GitHub Release, and it's a manual, deliberate step, not
+automated on every merge. `extension/manifest.json`'s `version` field is the
+single source of truth for the project's version number. Because feature
+work accumulates on `release/x.y.z` throughout a cycle (see "Workflow"
+above), cutting a release means merging that whole branch into `main`, not
+just bumping a number:
+
+1. On the `release/x.y.z` branch: finalize
+   [`release_notes.md`](release_notes.md) — add/complete the `## [x.y.z] -
+   YYYY-MM-DD` section (reverse-chronological, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
+   style: `Added`/`Changed`/`Fixed`/`Removed` subheadings) — and bump
+   `extension/manifest.json`'s `"version"` to match. Commit.
+2. Open a PR from `release/x.y.z` into `main` (title: `Release vx.y.z`) and
+   merge it once CI is green.
+3. Tag the resulting commit on `main`:
+   ```bash
+   git checkout main && git pull
+   git tag -a vx.y.z -m "vx.y.z"
+   git push origin main --tags
+   ```
+4. Create the GitHub Release from the tag:
+   ```bash
+   gh release create vx.y.z --title vx.y.z --notes-file -
+   ```
+   then paste the new `release_notes.md` section's body on stdin (Ctrl-D to
+   finish) — or open `gh release create vx.y.z` without `--notes-file` for
+   an interactive editor instead.
+5. Delete the spent `release/x.y.z` branch — it's fully merged into `main`
+   at this point, so nothing is lost:
+   ```bash
+   git push origin --delete release/x.y.z
+   ```
+6. Cut the next cycle's release branch from `main` and make it the new
+   default branch:
+   ```bash
+   git checkout main && git checkout -b release/x.y+1.0
+   git push origin release/x.y+1.0
+   gh repo edit --default-branch release/x.y+1.0
+   ```
+   `release/*` branches are covered by a repo-wide ruleset, so the new
+   branch is automatically protected (PR required, `test` status check
+   required, no force-push/deletion) — no per-branch protection setup
+   needed.
+
+Steps 2 onward always happen after the release branch's work is done and
+its PR has merged — never tag a branch mid-review.
+
+## Hotfixes
+
+A hotfix is for an urgent fix to code that's **already shipped** (tagged on
+`main`) and can't wait for the current `release/x.y.z` cycle to finish.
+Unlike everything else in "Workflow" above, it branches from and merges
+directly to `main`, skipping the release branch entirely — and then, unlike
+a normal release, it also has to be merged into the *current* release
+branch so that branch doesn't silently regress the fix once it eventually
+merges into `main` itself.
+
+`hotfix/*` branches are covered by their own repo-wide ruleset (PR required,
+`test` status check required, no force-push/deletion), the same protection
+`release/*` branches get.
+
+1. Branch from `main`, not the current release branch:
+   ```bash
+   git checkout main && git pull
+   git checkout -b hotfix/x.y.z
+   ```
+   `x.y.z` is the next **patch** version above whatever's currently tagged
+   on `main` (e.g. `main` at `v0.1.0` → `hotfix/0.1.1`).
+2. Fix the bug and add a regression test. Commit.
+3. On the hotfix branch, add a `## [x.y.z] - YYYY-MM-DD` entry to
+   `release_notes.md` (typically just a `Fixed` subsection) and bump
+   `extension/manifest.json`'s `"version"` to match.
+4. Open a PR from `hotfix/x.y.z` into `main` (title: `Hotfix vx.y.z`), merge
+   once CI is green.
+5. Tag and release from `main`, exactly like a normal release:
+   ```bash
+   git checkout main && git pull
+   git tag -a vx.y.z -m "vx.y.z"
+   git push origin main --tags
+   gh release create vx.y.z --title vx.y.z --notes-file -
+   ```
+6. **Merge the fix into the active `release/x.y.z` branch too** — open a
+   second PR, `hotfix/x.y.z` into the current release branch (or
+   cherry-pick the fix commit if the branches have diverged too much for a
+   clean merge). **Don't skip this step** — it's the one that's easy to
+   forget, and forgetting it means the fix silently disappears the moment
+   the release branch eventually merges into `main` and overwrites it.
+7. Delete `hotfix/x.y.z` once both merges (step 4 and step 6) are done.
 
 ## Reporting bugs / requesting features
 
