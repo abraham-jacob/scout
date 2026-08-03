@@ -474,6 +474,6 @@ Broad preferences that apply to any job, like compensation, location, or hard de
 
     ![A well-configured profiles directory](images/profiles_directory.png)
 
-From here: read [Using the Web UI](web-ui.md) to launch Scout and see what a
+From here: read [Using Scout](web-ui.md) to launch Scout and see what a
 run produces, or [Architecture](architecture.md) for how the pipeline works
 under the hood.

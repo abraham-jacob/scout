@@ -202,6 +202,21 @@
   font-size: 0.95em;
 }
 
+/* Inline code defaults to white-space: nowrap, which forces a column as wide
+   as its longest one-line value (e.g. a full URL) — badly skewing column
+   proportions on tables with long code examples. Let it wrap like normal text. */
+.md-typeset table:not([class]) td code {
+  white-space: normal;
+  word-break: break-all;
+}
+
+/* Custom Search's Input/Example table — long URL examples read better a
+   size down from the rest of the page's table text. */
+.md-typeset div.st-small-table td,
+.md-typeset div.st-small-table th {
+  font-size: 0.8em;
+}
+
 /* Caption paragraph directly under a schema table — sits close, not a new block */
 .md-typeset p.st-table-caption {
   margin-top: -2px;

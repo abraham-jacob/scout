@@ -53,7 +53,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Configuration: getting-started.md
-  - Using the Web UI: web-ui.md
+  - Using Scout: web-ui.md
   - OpenAI-compatible Backend: openai-compatible-backend.md
   - Architecture: architecture.md
   - Contributing: contributing.md
