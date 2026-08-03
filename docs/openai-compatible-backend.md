@@ -5,8 +5,9 @@ Passes 2 and 3 — the headless text-in/JSON-out passes — can run on any
 API. :simple-ollama: [Ollama](https://ollama.com) running on your own box is
 the common case (free, fully private), but the same config also works with a
 **remote** OpenAI-compatible API — e.g. [Kimi](https://www.moonshot.ai/) — if
-you'd rather not run a server yourself. Pass 1 always runs on Claude, because
-it's an agentic browser task a text model can't do.
+you'd rather not run a server yourself. Pass 1 (the browser scrape) doesn't
+call an LLM at all — it's plain JavaScript run by the Scout browser
+extension inside your own logged-in LinkedIn tab.
 
 <div class="grid cards" markdown>
 
@@ -32,7 +33,7 @@ it's an agentic browser task a text model can't do.
 | **Privacy** | Sent to Anthropic | Stays on your machine if self-hosted; sent to that provider if remote |
 | **Quality** | Best-in-class | Depends on the model you point at |
 | **Setup** | None | Stand up + tune a server, or just point at a remote endpoint |
-| **Pass 1 scrape** | Claude (always) | Claude (always) |
+| **Pass 1 scrape** | No LLM — browser extension | No LLM — browser extension |
 
 ```toml
 [llm]
@@ -80,9 +81,9 @@ box — whether that's a home GPU or a remote API having a bad day:
 
 ## Why route only Passes 2–3
 
-Pass 1 drives a real, logged-in Chrome session through the Claude in Chrome
-extension — that's an agentic capability, not a text-completion task, so it
-stays on Claude regardless of backend. Passes 2 and 3 are plain
+Pass 1 (the browser scrape) is plain JavaScript running inside your own
+logged-in LinkedIn tab via the Scout browser extension — it never calls an
+LLM at all, so there's no backend to route there. Passes 2 and 3 are plain
 text-in/JSON-out calls (clean a description, classify and score a job),
 which is exactly the shape any OpenAI-compatible server handles well.
 Routing is all-or-nothing across those two passes — see
@@ -91,9 +92,9 @@ Routing is all-or-nothing across those two passes — see
 ## Cost
 
 With the Claude backend, a run costs what the models cost: Haiku for the
-scrape and clean passes, Sonnet only for enrichment, prompt caching on, and
-the exact token usage and dollar cost printed at the end of every run. With a
-self-hosted OpenAI-compatible backend (e.g. Ollama), Passes 2–3 are free —
-Pass 1's Haiku scrape is the only API spend either way. Point at a paid
+clean pass, Sonnet for enrichment, prompt caching on, and the exact token
+usage and dollar cost printed at the end of every run. With a self-hosted
+OpenAI-compatible backend (e.g. Ollama), Passes 2–3 are free — Pass 1 never
+costs anything either way, since it doesn't touch an LLM. Point at a paid
 remote OpenAI-compatible API instead, and Passes 2–3 cost whatever that
 provider charges.

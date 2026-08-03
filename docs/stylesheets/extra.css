@@ -202,6 +202,19 @@
   font-size: 0.95em;
 }
 
+/* Caption paragraph directly under a schema table — sits close, not a new block */
+.md-typeset p.st-table-caption {
+  margin-top: -2px;
+}
+
+.md-typeset .md-typeset__scrollwrap:has(+ p.st-table-caption) {
+  margin-bottom: 0;
+}
+
+.md-typeset .md-typeset__scrollwrap:has(+ p.st-table-caption) .md-typeset__table {
+  margin-bottom: 0;
+}
+
 .md-typeset table:not([class]) tr {
   border-bottom: 1px solid var(--st-border-color);
   transition: background-color 125ms;
@@ -304,6 +317,15 @@
 .st-step:last-child {
   border-left-color: transparent;
   padding-bottom: 0.5rem;
+}
+
+/* Getting Started's last step (Scoring files) has enough of its own content
+   (the resume/profile/criteria subsections) that the line should run the
+   full height of the step, same as every other step — it just shouldn't
+   continue past it into the standalone "Final Check" section that follows. */
+.st-step--keep-line.st-step:last-child {
+  border-left-color: var(--st-border-color);
+  padding-bottom: 2rem;
 }
 
 .st-step > .st-step-num {

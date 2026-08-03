@@ -1,7 +1,9 @@
 # Using the Web UI
 
 It's a single-user, local-only FastAPI + HTMX app — no login, no network
-exposure, just a job list and a **▶ Run Scout** button.
+exposure. Scraping is triggered from the **Scout browser extension**'s
+popup, not a button in this UI; the web UI is purely for browsing, filtering,
+and tracking the jobs a run finds.
 
 <div class="st-steps st-steps--loose" markdown>
 
@@ -25,14 +27,17 @@ This spins up the local FastAPI web server.
 <div class="st-step" markdown>
 <div class="st-step-num" markdown="span">:material-play:</div>
 <span class="st-step-kicker">Execute</span>
-### Run Scout
+### Run Scout from the extension
 
-Click ![Run Scout](images/run_scout.png){ style="height: 1.8em; vertical-align: middle; border-radius: 0.25rem;" }
-to launch the pipeline as a subprocess. It streams live progress into a "run
-drawer" — per-pass timers, live *N of M* counts, which model is doing what,
-and a scrolling event log of every job's outcome.
+Click the **Scout icon** in Chrome's toolbar (see [Configuration](getting-started.md)
+for loading the extension). The popup lists your configured searches (each
+with a **Run** button), a **Custom Search** box, and **Scrape Current Page**.
+Progress streams live in the popup — Pass 1's harvest, then Pass 2/3
+enrichment, through to a saved-jobs summary. While a run is happening, this
+web UI shows a lightweight status strip so it doesn't look stale, but the
+detailed live log lives in the extension popup.
 
-![Live run drawer: three passes with timers, progress counts, and a streaming event log](images/run_drawer.gif){ .st-shot }
+![The Scout extension popup streaming a run: live Pass 1 progress, then Pass 2/3 enrichment, through to a saved-jobs summary](images/run_drawer.gif){ .st-shot }
 
 </div>
 

@@ -1,13 +1,29 @@
 # FAQ / Troubleshooting
 
-## :simple-googlechrome:{ .chrome } Pass 1 hangs / never finishes
+## The extension popup doesn't show my saved searches
 
-Check Chrome's download settings: *Settings → Downloads → "Ask where to save
-each file before downloading"* must be **off**. Pass 1 hands scraped job data
-off to the pipeline via a browser file download (see
-[Architecture](architecture.md)); if Chrome pops
-a save-location dialog, the agent can't dismiss it and the run stalls waiting
-for a file that never lands.
+The popup reads `profiles/config.toml` through the running web server, and
+that config is cached for the server's lifetime. If you edited
+`[[linkedin_searches]]` after starting the server, click **Reload** next to
+Saved Searches in the popup — it re-reads the file without a restart. A
+parse/validation error keeps the popup showing its last-known list rather
+than clearing it; check the server's terminal output for the actual error.
+
+## A run seems stuck partway through
+
+Use the **Abort** button next to the Run Log in the extension popup — it
+stops the current run regardless of which pass it's in. If a run halted
+because LinkedIn returned a block/auth-loss signal, whatever was already
+fetched is still ingested and the popup offers a **Resume** for the rest;
+give LinkedIn some time before retrying the same search.
+
+## Do I still need Claude Code?
+
+Only for Passes 2–3 (cleaning and enrichment/scoring), and only if
+`[llm] backend = "claude"` — the default. Pass 1 (the browser extension) is
+plain JavaScript and never calls an LLM. Set `backend = "api"` to route
+Passes 2–3 to an OpenAI-compatible server instead and skip Claude Code
+entirely; see [OpenAI-compatible Backend](openai-compatible-backend.md).
 
 ## The pipeline refuses to start with an API-backend error
 
