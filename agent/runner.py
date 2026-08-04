@@ -3,13 +3,20 @@ Scout agent runner.
 
 Three Claude passes, orchestrated here:
 
-Pass 1 — Browser scrape (Haiku, scrape_prompt.md / scrape_single_prompt.md)
-    A browser subprocess navigates LinkedIn and pulls EVERY job on page 1 into
-    a Downloads/scout_<run_id>.json blob download via the Voyager API, which the
-    runner reads directly from the Downloads folder. It does no filtering and no
-    description cleaning — the browser agent is already complex (privacy-filter
-    handoff, blob-download, virtualized cards) and we deliberately keep it
-    mechanical. description_raw is stored as-is from the API.
+Pass 1 — Browser scrape
+    Default: the Scout browser extension (extension/) — its content script
+    scrapes LinkedIn's Voyager API from inside the user's own logged-in tab
+    (same-origin, no CDP fingerprint) and POSTs the results to
+    /api/extension/ingest, which lands here via --ingest-file (see Usage
+    below and process_ingested_jobs()). Fallback: the older CDP-driven path
+    (Haiku, scrape_prompt.md / scrape_single_prompt.md) — a browser
+    subprocess navigates LinkedIn and pulls EVERY job on page 1 into a
+    Downloads/scout_<run_id>.json blob download via the same Voyager API,
+    which the runner reads directly from the Downloads folder. Not surfaced
+    in the web UI anymore; kept as a fallback (--url, or no args to loop
+    [[linkedin_searches]]) until the extension is proven in longer
+    real-world use. Neither path filters or cleans descriptions —
+    description_raw is stored as-is from the API either way.
 
 Pass 2 — Description cleaning (Haiku, parallel, clean_prompt.md)
     description_raw is split in Python (agent/units.py) into numbered
@@ -31,13 +38,17 @@ Pass 3 — Per-job enrichment (Sonnet, parallel, enrichment_prompt.md)
 Passes 2 and 3 are the two "headless" passes and run on a configurable backend
 (profiles/config.toml [llm] backend): the default "claude" shells out to the
 `claude` CLI, while "api" routes both through run_headless() to any
-OpenAI-compatible endpoint (e.g. Ollama, local or remote). Pass 1 always runs on
-Claude — it drives the browser and is agentic, which a text-completion model
-can't do.
+OpenAI-compatible endpoint (e.g. Ollama, local or remote). Pass 1 doesn't touch
+an LLM at all via the extension path (plain JS in the browser); the CDP
+fallback path runs on Claude specifically because driving a browser is an
+agentic task a text-completion model can't do.
 
 Usage:
     python -m agent.runner                 # scrapes every profiles/config.toml [[linkedin_searches]] entry
     python -m agent.runner --url <url>     # scrape one ad-hoc URL, ignoring config
+    python -m agent.runner --ingest-file <path> --run-id <id> --search-name <name> --url <url>
+        # skip Pass 1 entirely and run Pass 2/3 + save on jobs already scraped
+        # by the browser extension (see app/main.py's /api/extension/ingest)
 """
 
 import argparse
@@ -903,6 +914,17 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
             emit_log(msg, level="warn", index=index)
             return []
 
+    return _process_scraped_jobs(all_jobs, index)
+
+
+def _process_scraped_jobs(all_jobs: dict, index: int = 1) -> list[dict]:
+    """Deterministic filter → clean → enrich → keep only configured role types.
+
+    The scrape-independent tail of run_scrape(), factored out so that jobs
+    harvested by the browser extension (process_ingested_jobs) go through
+    the exact same filter/clean/enrich pipeline as the CDP scrape, with no
+    duplicated logic between the two entry points.
+    """
     # Deterministic pre-filters — cheap, and done BEFORE enrichment so we never
     # spend a Sonnet call on a job we're going to drop anyway.
     emit(scope="search", index=index, key=StepKey.FILTER, status="active")
@@ -944,6 +966,33 @@ Follow the system prompt exactly. Scrape every job on page 1 into the download f
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def _save_scraped_jobs(run_id: str, jobs: list[dict], index: int = 1) -> bool:
+    """Emit SAVE progress and persist ``jobs`` via save_jobs().
+
+    Shared tail of process_url()/process_ingested_jobs() — always returns
+    True (saving zero jobs is a normal, successful outcome).
+    """
+    emit(scope="search", index=index, key=StepKey.SAVE, status="active")
+    if not jobs:
+        emit(scope="search", index=index, key=StepKey.SAVE, status="done", stat="0 saved")
+        print("No jobs to save.")
+        logging.getLogger("scout").info("Scrape run %s: no jobs to save", run_id)
+        print_token_summary()
+        return True
+
+    result = save_jobs(run_id, jobs)
+    emit(scope="search", index=index, key=StepKey.SAVE, status="done",
+         stat=f"{result['saved']} saved, {result['reposts_detected']} reposts")
+    emit_log(f"Saved {result['saved']} jobs · {result['reposts_detected']} reposts",
+             level="good", index=index)
+    print(f"\nSave result: {result}")
+    logging.getLogger("scout").info(
+        "Scrape run %s: %d saved, %d reposts", run_id,
+        result.get("saved", 0), result.get("reposts_detected", 0))
+    print_token_summary()
+    return True
+
+
 def process_url(
     url: str,
     search_name: str = "Manual run",
@@ -975,25 +1024,32 @@ def process_url(
         print_token_summary()
         return False
 
-    emit(scope="search", index=index, key=StepKey.SAVE, status="active")
-    if not jobs:
-        emit(scope="search", index=index, key=StepKey.SAVE, status="done", stat="0 saved")
-        print("No jobs to save.")
-        logging.getLogger("scout").info("Scrape run %s: no jobs to save", run_id)
-        print_token_summary()
-        return True
+    return _save_scraped_jobs(run_id, jobs, index)
 
-    result = save_jobs(run_id, jobs)
-    emit(scope="search", index=index, key=StepKey.SAVE, status="done",
-         stat=f"{result['saved']} saved, {result['reposts_detected']} reposts")
-    emit_log(f"Saved {result['saved']} jobs · {result['reposts_detected']} reposts",
-             level="good", index=index)
-    print(f"\nSave result: {result}")
-    logging.getLogger("scout").info(
-        "Scrape run %s: %d saved, %d reposts", run_id,
-        result.get("saved", 0), result.get("reposts_detected", 0))
-    print_token_summary()
-    return True
+
+def process_ingested_jobs(
+    all_jobs: dict,
+    search_name: str,
+    url: str,
+    run_id: str | None = None,
+    index: int = 1,
+) -> bool:
+    """Run the pipeline on jobs already scraped by the browser extension.
+
+    ``all_jobs`` is the Pass 1 output shape (``{job_id: {...}}``) the
+    extension POSTs to ``/api/extension/ingest`` — the same shape
+    ``load_downloaded_jobs()`` produces for the CDP path. This is
+    process_url() minus run_scrape(): deterministic filters, clean, enrich,
+    then save, through the same _process_scraped_jobs()/_save_scraped_jobs()
+    tail so extension-sourced and CDP-sourced jobs are processed identically.
+    ``run_id`` lets the caller (the ingest endpoint) pre-generate the id and
+    hand it back to the extension before this pipeline even starts.
+    Always returns True (mirrors process_url's "0 saved is still success").
+    """
+    run_id = create_scrape_run(search_name=search_name, linkedin_url=url, run_id=run_id)
+    print(f"\nRun  : {run_id} (ingested {len(all_jobs)} jobs from extension)")
+    kept = _process_scraped_jobs(all_jobs, index)
+    return _save_scraped_jobs(run_id, kept, index)
 
 
 # ---------------------------------------------------------------------------
@@ -1003,7 +1059,16 @@ def process_url(
 def main() -> None:
     """Entry point."""
     parser = argparse.ArgumentParser(description="Scout job agent runner")
-    parser.add_argument("--url", help="Scrape one ad-hoc LinkedIn URL, ignoring config")
+    parser.add_argument("--url", help="Scrape one ad-hoc LinkedIn URL, ignoring config "
+                                       "(also carries the original search URL when paired "
+                                       "with --ingest-file)")
+    parser.add_argument("--ingest-file",
+                        help="Skip Pass 1 and run the pipeline on jobs already scraped by "
+                             "the browser extension — a JSON file of the {job_id: {...}} "
+                             "shape POSTed to /api/extension/ingest")
+    parser.add_argument("--run-id", help="Pre-generated scrape_run id (paired with --ingest-file)")
+    parser.add_argument("--search-name", default="Extension run",
+                        help="Search name label for the scrape run (paired with --ingest-file)")
     parser.add_argument("--log-model-calls", action="store_true",
                         help="Log every Claude call (model, system prompt, user "
                              "message) to model_calls.log in the configured log dir")
@@ -1039,6 +1104,23 @@ def main() -> None:
         _warm_up_clean_pass(config)
 
     emit(scope="global", key=StepKey.START, status="done")
+
+    if args.ingest_file:
+        ingest_path = Path(args.ingest_file)
+        all_jobs = json.loads(ingest_path.read_text())
+        try:
+            ingest_path.unlink()
+        except OSError:
+            pass
+        process_ingested_jobs(
+            all_jobs,
+            search_name=args.search_name,
+            url=args.url or "",
+            run_id=args.run_id,
+            index=1,
+        )
+        log.info("Run finished (ingested %d jobs from %s)", len(all_jobs), args.ingest_file)
+        return
 
     if args.url:
         url = resolve_scan_url(args.url)

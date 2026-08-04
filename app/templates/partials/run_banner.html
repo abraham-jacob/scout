@@ -1,0 +1,25 @@
+{# ----- lightweight run banner (self-replacing; polls continuously, not just
+     while running) ----- #}
+{# The web UI no longer triggers runs itself — that's the browser extension's
+   job now (see extension/popup.js) — so this has to keep polling even at
+   rest, in case a run starts from outside this tab. "every 3s" is a relaxed
+   cadence vs. the old drawer's 1s: nobody's watching this moment-to-moment,
+   it's just "don't leave the tab looking idle while Scout is actually
+   working." Detailed step-by-step/event-log progress lives in the extension
+   popup now (GET /api/extension/status). #}
+<div id="run-banner" hx-get="/scout/status" hx-trigger="every 3s" hx-swap="outerHTML"
+     data-running="{{ 'true' if run.running else 'false' }}">
+  {% if run.running %}
+  <div class="bg-indigo-50 dark:bg-indigo-500/10 border-b border-indigo-200 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-sm px-6 py-2 flex items-center gap-2">
+    <svg class="animate-spin h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+    </svg>
+    <span>Scout is running — {{ nav.text }}</span>
+  </div>
+  {% elif run.error %}
+  <div class="bg-rose-50 dark:bg-rose-500/10 border-b border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-sm px-6 py-2">
+    Scout run failed: {{ run.error }}
+  </div>
+  {% endif %}
+</div>

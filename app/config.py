@@ -66,6 +66,11 @@ DEFAULT_DOWNLOAD_DIR = "~/Downloads"
 # invocation, used when the optional [scrape] run_timeout_minutes isn't set.
 DEFAULT_RUN_TIMEOUT_MINUTES = 30
 
+# Jitter bounds (milliseconds) for the browser extension's per-job Voyager
+# fetch loop, used when the optional [extension] section isn't set.
+DEFAULT_EXTENSION_MIN_DELAY_MS = 3000
+DEFAULT_EXTENSION_MAX_DELAY_MS = 8000
+
 # LLM backend for the two headless passes (clean + enrich). "claude" runs them
 # on the Claude CLI; "api" routes them to an OpenAI-compatible endpoint. The
 # [llm] section and its `backend` are required — there is no default backend, so
@@ -151,6 +156,8 @@ class Config:
     api_timeout: float
     api_clean_params: dict
     api_enrich_params: dict
+    extension_min_delay_ms: int
+    extension_max_delay_ms: int
 
 
 def _parse_roles(data: dict) -> list[Role]:
@@ -351,8 +358,9 @@ def load_config() -> Config:
     a value is malformed. Failing loudly is deliberate: there are no hidden
     defaults to fall back to. Cached for the process lifetime — call
     load_config.cache_clear() if profiles/config.toml changes while the
-    process is running (tests do this via a fixture; there is no other
-    caller that needs a live reload).
+    process is running (tests do this via a fixture; app/main.py's
+    POST /api/extension/reload-config does the same for the popup's Reload
+    Saved Searches button).
     """
     if not CONFIG_FILE.exists():
         raise ValueError(
@@ -429,6 +437,21 @@ def load_config() -> Config:
             scrape, "scrape", "run_timeout_minutes"
         )
 
+    # [extension] is optional; the browser-extension jitter bounds default to
+    # DEFAULT_EXTENSION_MIN/MAX_DELAY_MS so the extension works with no config
+    # change. If set, min must not exceed max.
+    extension_min_delay_ms = DEFAULT_EXTENSION_MIN_DELAY_MS
+    extension_max_delay_ms = DEFAULT_EXTENSION_MAX_DELAY_MS
+    extension = data.get("extension")
+    if isinstance(extension, dict) and "min_delay_ms" in extension:
+        extension_min_delay_ms = _require_positive_int(extension, "extension", "min_delay_ms")
+    if isinstance(extension, dict) and "max_delay_ms" in extension:
+        extension_max_delay_ms = _require_positive_int(extension, "extension", "max_delay_ms")
+    if extension_min_delay_ms > extension_max_delay_ms:
+        raise ValueError(
+            "profiles/config.toml: [extension] min_delay_ms must not exceed max_delay_ms"
+        )
+
     (llm_backend, max_workers, api_base_url, api_model, api_key,
      api_timeout, api_clean_params, api_enrich_params) = _parse_llm(data)
 
@@ -450,6 +473,8 @@ def load_config() -> Config:
         api_timeout=api_timeout,
         api_clean_params=api_clean_params,
         api_enrich_params=api_enrich_params,
+        extension_min_delay_ms=extension_min_delay_ms,
+        extension_max_delay_ms=extension_max_delay_ms,
     )
 
 

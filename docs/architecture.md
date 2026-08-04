@@ -9,8 +9,8 @@ pipeline — this page is the reader-facing version of the same design.
 
 <div class="arch-node" markdown>
 <span class="arch-node-title">Pass 1 · Browser scrape</span>
-<span class="arch-node-sub">Drives Chrome, hits LinkedIn's Voyager API for every job on page 1</span>
-<span class="arch-cost haiku">Haiku</span>
+<span class="arch-node-sub">Scout browser extension hits LinkedIn's Voyager API from inside your own session</span>
+<span class="arch-cost free">Free</span>
 </div>
 
 <div class="arch-node" markdown>
@@ -43,27 +43,38 @@ pipeline — this page is the reader-facing version of the same design.
 
 </div>
 
-## :simple-claude:{ .claude } Pass 1 — browser scrape (Haiku)
+## :material-puzzle:{ .chrome } Pass 1 — browser scrape (Scout extension)
 
-`runner.py` spawns `claude --print --chrome` on Haiku, driven by
-`agent/scrape_prompt.md`. This sub-agent does **no filtering** — it hits
-LinkedIn's internal **Voyager job-postings API** via `javascript_tool` (not
-the accessibility tree, not card-clicking) to pull every field for every job
-on page 1, including virtualized cards that LinkedIn never renders: title,
-company, full description, apply URL, applied status, and whether the
-posting is still live.
+**Default: the Scout browser extension** (`extension/`). Its content script
+(`extension/content.js`) runs inside your own authenticated LinkedIn tab —
+no automated-browser fingerprint. It hits LinkedIn's
+internal **Voyager job-postings API** the same way LinkedIn's own SPA does,
+pulling every field for every job behind a saved search, including
+virtualized cards the page itself never renders: title, company, full
+description, apply URL, applied status, and whether the posting is still
+live.
 
-**Getting the data out of the browser.** Each job description is 5–13 KB,
-and the Claude in Chrome extension's privacy filter blocks large
-`javascript_tool` return values — a full page of descriptions is far too
-big to come back through the tool call. So the scrape agent instead writes
-the whole batch to `window.__jobs` in the page and triggers a **blob
-download** of it as `scout_<run_id>.json` to the browser's Downloads folder.
-Only a one-line status comes back through the extension. `runner.py`
-(`load_downloaded_jobs`) then polls the Downloads folder — config-overridable
-via `[scrape] download_dir`, defaulting to `~/Downloads` — for that file,
-reads it, and deletes it. There's deliberately no shell step in this
-handoff, so it works identically on Windows, macOS, and Linux.
+**Harvest → dedupe → fetch.** `content.js` waits for the results to settle,
+then collects every job id on the page. Those ids are posted to
+`POST /api/extension/dedupe`, which drops anything already in the database —
+the biggest lever on request volume. Remaining jobs are fetched
+**sequentially with random jitter** (`[extension] min_delay_ms`/`max_delay_ms`,
+default 3000/8000) rather than in a parallel burst, so the traffic pattern
+looks like a human clicking through jobs, not a scraper. A block/auth-loss
+signal from LinkedIn halts the run immediately rather than retrying into it;
+whatever was already fetched is still ingested, and the popup can Resume
+the rest later.
+
+**Ingest.** The batch is posted to `POST /api/extension/ingest`, which spawns
+`python -m agent.runner --ingest-file <path>` — the same subprocess Pass 2/3
+always run as, so extension-triggered runs report progress through the exact
+mechanism described below.
+
+**Popup.** The extension's popup (`extension/popup.html`) is the
+trigger/monitor UI: your saved searches (each with a Run button), a Custom
+Search box for a pasted URL or job id, Scrape Current Page, and an Abort
+button. It streams Pass 1 live as it happens, then keeps streaming once
+Pass 2/3 pick up server-side, through to a saved-jobs summary.
 
 ## Between passes — deterministic filters
 
@@ -102,15 +113,21 @@ classified `Other`, or that fail to enrich, are dropped; the rest are saved
 via `agent/tools.py::save_jobs`, which also does repost detection and
 unwraps LinkedIn's safety-redirect apply URLs.
 
-## Progress events → the web UI
+## Progress events → extension popup + web UI
 
 `runner.py` emits `SCOUT_PROGRESS {json}` sentinel lines on stdout as the
-pipeline runs. The web UI (`app/main.py`) reads that subprocess's stdout
-line by line and folds each event into an in-memory run-state dict, which
-renders the live "run drawer" partial that the UI polls every second —
-per-pass timers, live progress counts, which backend and model is active,
-and a streaming, honest event log (a failed call logs as a failure, and its
-retry logs as a retry — not as silent success).
+pipeline runs. `app/main.py` reads that subprocess's stdout line by line and
+folds each event into an in-memory run-state dict — same mechanism
+regardless of whether the run was triggered by the extension or
+`--ingest-file` directly. Two different things read that state now: the
+**extension popup** polls `GET /api/extension/status` and renders the full
+detail — per-pass timers, live progress counts, which backend and model is
+active, and a streaming, honest event log (a failed call logs as a failure,
+and its retry logs as a retry — not as silent success). The **web UI**
+doesn't trigger runs anymore, so it only needs a lightweight
+"Scout is running…"/error strip (`GET /scout/status`, `partials/run_banner.html`)
+that stays honest if a run is happening elsewhere while the page is open —
+not a full drawer.
 
 ## Data layer
 
@@ -120,8 +137,56 @@ title/description at enrichment time — not per-run, since a role's
 classification can change as prompts evolve. The URL that seeds Pass 1 comes
 straight from your `[[linkedin_searches]]` config — no external account or
 OAuth flow involved. Each `scrape_runs` row records the search's `name`
-alias (shown in the run drawer and event log) alongside the URL that was
+alias (shown in the extension popup's event log) alongside the URL that was
 scraped.
+
+### scrape_runs
+
+| Column | Type | Notes |
+|---|---|---|
+| `run_id` | `VARCHAR` | Primary key |
+| `search_name` | `VARCHAR` | The search's `name` alias from `[[linkedin_searches]]` |
+| `linkedin_search_url` | `VARCHAR` | The URL that was scraped |
+| `jobs_found` | `INTEGER` | Default `0`; updated as jobs land |
+| `run_at` | `TIMESTAMP` | Default `current_timestamp` |
+
+A write-only audit log, one row per configured search per run. Nothing in
+the app reads it back today; `jobs.scrape_run_id` gives every job real
+provenance back to the run that scraped it.
+{: .st-table-caption }
+
+### jobs
+
+| Column | Type | Notes |
+|---|---|---|
+| `job_id` | `VARCHAR` | Primary key |
+| `scrape_run_id` | `VARCHAR` | References `scrape_runs(run_id)` |
+| `title` | `VARCHAR` | |
+| `company` | `VARCHAR` | |
+| `location` | `VARCHAR` | |
+| `role_type` | `VARCHAR` | Classified per-job at enrichment time, not per-run |
+| `description_raw` | `VARCHAR` | As scraped |
+| `description_clean` | `VARCHAR` | Boilerplate-stripped, from Pass 2 |
+| `description_summary` | `VARCHAR` | 2–4 sentence summary, from Pass 3 |
+| `match_score` | `FLOAT` | Weighted combination of fit and criteria |
+| `fit_score` | `FLOAT` | Resume/profile fit |
+| `criteria_score` | `FLOAT` | Fit against `criteria.md` |
+| `dealbreakers` | `VARCHAR[]` | |
+| `match_reason` | `VARCHAR` | |
+| `linkedin_url` | `VARCHAR` | |
+| `apply_url` | `VARCHAR` | Unwrapped from LinkedIn's safety-redirect URL |
+| `apply_platform` | `VARCHAR` | |
+| `salary_range` | `VARCHAR` | Regex-parsed from the description text |
+| `tags` | `VARCHAR[]` | |
+| `status` | `VARCHAR` | Default `'new'`; see the pipeline statuses in `app/database.py::JOB_STATUSES` |
+| `seen` | `BOOLEAN` | Default `false` |
+| `is_repost` | `BOOLEAN` | Default `false`, from repost detection in `save_jobs` |
+| `original_job_id` | `VARCHAR` | Set when `is_repost` is true |
+| `date_scraped` | `TIMESTAMP` | Default `current_timestamp` |
+
+One row per surviving job, written by `agent/tools.py::save_jobs` after
+Pass 3.
+{: .st-table-caption }
 
 ## Design notes
 

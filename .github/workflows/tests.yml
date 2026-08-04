@@ -1,18 +1,25 @@
 name: Tests
 
-# Runs the full test suite (with coverage) on every push to main and on every
-# PR targeting main. The "Tests" badge in README.md reads this workflow's
-# status directly, so it's always accurate — no manual updates needed.
+# Runs the full test suite (with coverage) on every push to main, a
+# release/* branch, or a hotfix/* branch, and on every PR targeting any of
+# them. release/* is the active default/integration branch for a release
+# cycle; hotfix/* branches off main for an urgent fix to already-shipped
+# code (see CONTRIBUTING.md "Workflow"/"Hotfixes"); main only otherwise
+# moves at release-cut time. The "Tests" badge in README.md reads this
+# workflow's status directly, so it's always accurate — no manual updates
+# needed.
 #
-# On push to main only, also regenerates the coverage badge and publishes it
-# to the unprotected `badges` branch (README.md's coverage badge points at a
-# fixed raw-content URL on that branch, so the badge itself never needs
-# touching — only its target file changes).
+# On push to main or a release/* branch, also regenerates the coverage badge
+# and publishes it to the unprotected `badges` branch (README.md's coverage
+# badge points at a fixed raw-content URL on that branch, so the badge itself
+# never needs touching — only its target file changes). hotfix/* branches are
+# short-lived and their merge into main triggers a main-push regen anyway, so
+# they're excluded here.
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**", "hotfix/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "release/**", "hotfix/**"]
 
 permissions:
   contents: write
@@ -47,7 +54,7 @@ jobs:
           echo "percent=$PCT" >> "$GITHUB_OUTPUT"
 
       - name: Generate coverage badge
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
         run: |
           mkdir -p badge-output
           PCT="${{ steps.coverage.outputs.percent }}"
@@ -59,7 +66,7 @@ jobs:
           curl -sf "https://img.shields.io/badge/coverage-${PCT}%25-${COLOR}" -o badge-output/coverage.svg
 
       - name: Publish coverage badge
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
