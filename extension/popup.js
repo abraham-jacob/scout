@@ -188,7 +188,7 @@ function showConnected() {
 }
 
 /**
- * Render the "Scout isn't running" state and hide the rest of the popup —
+ * Render the "server not running" state and hide the rest of the popup —
  * there's nothing useful to show (or click) without a backend to talk to.
  */
 function showOffline() {

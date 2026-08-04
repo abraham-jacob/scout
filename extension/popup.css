@@ -676,6 +676,13 @@ body {
   font-size: 11px;
 }
 
+.offline-gif {
+  margin-top: 16px;
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--edge);
+}
+
 .hidden {
   display: none;
 }
