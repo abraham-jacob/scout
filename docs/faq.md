@@ -17,6 +17,19 @@ because LinkedIn returned a block/auth-loss signal, whatever was already
 fetched is still ingested and the popup offers a **Resume** for the rest;
 give LinkedIn some time before retrying the same search.
 
+## "Scrape Current Page" fails with "Couldn't reach this tab: Could not establish connection. Receiving end does not exist."
+
+The content script that talks to LinkedIn only injects into tabs
+opened or navigated **after** the extension was loaded or reloaded — a
+LinkedIn jobs tab that was already open from before doesn't have it, so the
+popup can't reach it (the "Couldn't reach this tab" part is the popup's own
+wrapper; the rest is Chrome's underlying error, which is the same message
+you'd get for several unrelated causes). Refresh the LinkedIn tab (the
+popup's enable-check only looks at the URL, not whether the content script
+actually registered, so it can't catch this case) and try again. If it still
+fails, reload the extension itself from `chrome://extensions` and refresh
+the tab once more.
+
 ## Do I still need Claude Code?
 
 Only for Passes 2–3 (cleaning and enrichment/scoring), and only if

@@ -78,6 +78,21 @@ Harvests whatever LinkedIn jobs page is already open in your active Chrome
 tab — handy for a one-off search you haven't saved. Requires a LinkedIn jobs
 page to be open in the browser; the button stays disabled otherwise.
 
+![Using Scrape Current Page to harvest an already-open LinkedIn jobs page](images/scrape_current_page.gif){ .st-shot }
+
+</div>
+
+<div class="st-step" markdown>
+<div class="st-step-num" markdown="span">:material-open-in-new:</div>
+<span class="st-step-kicker">Fire Up</span>
+### Open the web UI
+
+Once a run has saved some jobs, open a new tab and go to
+`http://127.0.0.1:8000` — that's the web UI the rest of this page covers,
+served by the same local FastAPI server you started in the first step.
+
+![Opening a new tab and navigating to the Scout web UI](images/fire_up_scout_web.gif){ .st-shot }
+
 </div>
 
 <div class="st-step" markdown>
