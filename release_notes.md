@@ -31,6 +31,10 @@ single source of truth for the project's version number.
   `GET /api/extension/status`.
 - New optional `[extension]` config section (`min_delay_ms`/`max_delay_ms`)
   for tuning the Voyager request pacing.
+- **Reload Saved Searches** button next to the popup's search list, to pick
+  up an edited `config.toml` without restarting the server.
+- **Abort** button next to the Run Log, to stop a run in progress regardless
+  of which pass it's in.
 
 ### Changed
 
@@ -48,8 +52,14 @@ single source of truth for the project's version number.
 - A run in progress could look idle (all buttons enabled) if the extension
   popup was closed and reopened mid-scrape, risking a duplicate run being
   started against the same search.
+- Pass 1's harvest could silently cap at ~7 jobs on the virtualized
+  `/jobs/search/` DOM variant, which mounts only the first burst of cards up
+  front; a poll loop now re-harvests every 700ms until the job-id count
+  holds steady instead of relying on a single quiet-period wait.
 
-Docs (`README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `profiles/README.md`)
-updated to describe the extension as the default Pass 1 path; the CDP-driven
-scrape (`agent/scrape_prompt.md`) stays in place as a fallback until the
-extension is proven in longer real-world use.
+Docs (`README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `profiles/README.md`, the
+MkDocs site) updated to describe the extension as the default Pass 1 path,
+including a walkthrough of Saved Searches/Custom Search/Scrape Current Page
+on the "Using Scout" page and new FAQ entries for common extension errors;
+the CDP-driven scrape (`agent/scrape_prompt.md`) stays in place as a
+fallback until the extension is proven in longer real-world use.
