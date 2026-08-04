@@ -351,6 +351,12 @@ Tests mirror this: `tests/test_agent_llm_common.py`, `tests/test_agent_claude.py
   live in `CONTRIBUTING.md`'s "Releasing"/"Hotfixes" sections and
   `release_notes.md` at the repo root; `extension/manifest.json`'s
   `"version"` is the single source of truth for the project's version number.
+- **Never merge a PR into `main` or a `release/x.y.z` branch.** This holds
+  even mid-release-cut, and even once the human has approved the overall
+  release plan — plan approval is not merge approval. Open the PR (`gh pr
+  create`) and stop; the human reviews and merges it themselves. Steps that
+  come after a merge (tagging, `gh release create`, deleting the spent
+  branch) block on that human action.
 - **CI runs on every push and PR** via [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
   (`pipenv run unit-tests` — tests + branch coverage), triggered on `main`,
   `release/**`, and `hotfix/**`. Run it locally before opening a PR rather
