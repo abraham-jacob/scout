@@ -157,7 +157,7 @@ above), cutting a release means merging that whole branch into `main`, not
 just bumping a number:
 
 1. On the `release/x.y.z` branch: finalize
-   [`release_notes.md`](release_notes.md) — add/complete the `## [x.y.z] -
+   [`release_notes.md`](https://github.com/abraham-jacob/scout/blob/main/release_notes.md) — add/complete the `## [x.y.z] -
    YYYY-MM-DD` section (reverse-chronological, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
    style: `Added`/`Changed`/`Fixed`/`Removed` subheadings) — and bump
    `extension/manifest.json`'s `"version"` to match. Commit.
