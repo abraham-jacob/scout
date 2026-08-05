@@ -1,0 +1,688 @@
+/* Scout extension popup — matches mockups/extension_popup.html's dark
+   palette and layout (ink/card/edge, gradient run buttons, step-row run
+   drawer). No CDN fonts/frameworks: MV3 popups should work fully offline,
+   so this is plain hand-written CSS, not a Tailwind subset. */
+
+:root {
+  --ink: #0b0f1d;
+  --card: #141a2e;
+  --edge: #232c4b;
+  --edge-hi: #3b4674;
+  --text: #cbd5e1;
+  --text-dim: #64748b;
+  --text-bright: #f8fafc;
+  --accent: #6366f1;
+  --accent-hi: #818cf8;
+  --good: #34d399;
+  --bad: #f87171;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --ink: #faf9f6;
+    --card: #ffffff;
+    --edge: #e7e5e4;
+    --edge-hi: #d6d3d1;
+    --text: #44403c;
+    --text-dim: #94a3b8;
+    --text-bright: #0f172a;
+    --accent: #f97316;
+    --accent-hi: #fb923c;
+  }
+}
+
+/* Explicit user choice (popup.js's theme toggle, persisted to localStorage)
+   overrides system preference either direction — attribute-selector
+   specificity beats the plain :root inside the media query above, so these
+   two blocks always win regardless of source order. */
+:root[data-theme="dark"] {
+  --ink: #0b0f1d;
+  --card: #141a2e;
+  --edge: #232c4b;
+  --edge-hi: #3b4674;
+  --text: #cbd5e1;
+  --text-dim: #64748b;
+  --text-bright: #f8fafc;
+  --accent: #6366f1;
+  --accent-hi: #818cf8;
+}
+
+:root[data-theme="light"] {
+  --ink: #faf9f6;
+  --card: #ffffff;
+  --edge: #e7e5e4;
+  --edge-hi: #d6d3d1;
+  --text: #44403c;
+  --text-dim: #94a3b8;
+  --text-bright: #0f172a;
+  --accent: #f97316;
+  --accent-hi: #fb923c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Fixed size, no outer scrollbar: html/body are capped and clipped, and the
+   body is a column flexbox — header (natural height) on top, then #content
+   splitting the rest 60/40 into a controls pane and a log pane. Each pane
+   owns exactly one internal scroll region (see .search-list and .drawer
+   below) so there are two scrollbars total, never a third body-level one on
+   top of them. */
+/* Chrome extension popups have a documented traditional maximum render size
+   of 800x600 — independent of any CSS height/width we ask for. Every attempt
+   above 600px height reintroduced a single whole-document scrollbar with
+   nothing overflowing internally, which is exactly that ceiling being hit
+   (the popup window itself renders shorter than our CSS demands, so the
+   entire CSS-true-height document scrolls inside it). Staying at/under 600
+   is what actually avoids that, not shrinking internal content. */
+html, body {
+  width: 608px;
+  height: 600px;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ink);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+.search-list::-webkit-scrollbar,
+.drawer::-webkit-scrollbar {
+  width: 8px;
+}
+.search-list::-webkit-scrollbar-thumb,
+.drawer::-webkit-scrollbar-thumb {
+  background: var(--text-dim);
+  border-radius: 4px;
+}
+
+.search-list::-webkit-scrollbar-thumb:hover,
+.drawer::-webkit-scrollbar-thumb:hover {
+  background: var(--text);
+}
+.search-list::-webkit-scrollbar-track,
+.drawer::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--ink);
+  border-bottom: 1px solid var(--edge);
+}
+
+.brand-logo {
+  width: 26px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.brand {
+  line-height: 1.2;
+  flex: 1;
+  min-width: 0;
+}
+
+.theme-toggle {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--card);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--text-bright);
+  border-color: var(--edge-hi);
+}
+
+.theme-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Icon-swap logic — mirrors the main app's hidden/dark:block Tailwind
+   pattern by hand: default (no explicit theme) follows system preference;
+   an explicit data-theme always wins. */
+.icon-sun { display: none; }
+.icon-moon { display: block; }
+
+@media (prefers-color-scheme: dark) {
+  .icon-sun { display: block; }
+  .icon-moon { display: none; }
+}
+
+:root[data-theme="dark"] .icon-sun { display: block; }
+:root[data-theme="dark"] .icon-moon { display: none; }
+:root[data-theme="light"] .icon-sun { display: none; }
+:root[data-theme="light"] .icon-moon { display: block; }
+
+.brand-name {
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text-bright);
+  letter-spacing: -0.01em;
+}
+
+.conn-status {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.conn-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.conn-status--pending {
+  color: var(--text-dim);
+}
+
+.conn-status--ok {
+  color: var(--good);
+}
+
+.conn-status--error {
+  color: var(--bad);
+}
+
+/* #content holds the two 60/40 panes and is itself the flexible remainder
+   of body's fixed height (everything below the header). */
+.content {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* flex-grow ratios (3:2 = 60:40), not percentage flex-basis — percentage
+   flex-basis needs the parent's height to resolve as fully "definite",
+   which can silently fail inside a browser-extension popup's own
+   auto-sizing layout pass even though it'd work in a normal tab. Ratio-based
+   growth from a zero basis doesn't have that dependency. */
+/* No fixed height ratio between the panes anymore — with Saved Searches
+   capped to ~3 rows, the controls pane's actual content is far shorter than
+   any fixed 60% share would be, which just left a blank gap above "Run".
+   Controls sizes to its real content; the log pane absorbs all the leftover
+   vertical space in the fixed-height body instead. */
+.pane--controls {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px 12px;
+}
+
+.pane--log {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 6px;
+}
+
+.section {
+  flex: 0 0 auto;
+  margin-bottom: 18px;
+}
+
+/* Saved Searches used to flex-grow to fill whatever room the controls pane
+   had left over, but that let it dominate the pane — capped to a fixed
+   ~3-row height instead (see .search-list's max-height) so Custom Search
+   and Scrape Current Page sit closer to it rather than pushed toward the
+   bottom of a mostly-empty pane. */
+.section--grow {
+  flex: 0 0 auto;
+}
+
+.section-title {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.section-title-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.section-title-row .section-title {
+  margin-bottom: 0;
+}
+
+.icon-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.icon-btn:hover:not(:disabled) {
+  color: var(--text-bright);
+  background: var(--card);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Enabled only while a run is active — the inverse of every other control
+   in the popup, which disable during a run instead. */
+.btn-abort {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--bad);
+  background: transparent;
+  color: var(--bad);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-abort:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.btn-abort:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.btn-abort-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.icon-btn.is-loading svg {
+  animation: scout-spin 0.8s linear infinite;
+}
+
+.search-list {
+  flex: 0 0 auto;
+  /* ~3 rows: 3 * (row height ~27px) + 2 * (gap 4px) */
+  max-height: 89px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.search-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-row {
+  display: flex;
+  gap: 8px;
+}
+
+.custom-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  font-size: 13px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  color: var(--text-bright);
+}
+
+.custom-row input::placeholder {
+  color: var(--text-dim);
+}
+
+.btn {
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 8px 16px;
+  cursor: pointer;
+  color: white;
+  background: linear-gradient(to right, var(--accent), var(--accent-hi));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: filter 0.15s, background 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn:disabled {
+  background: var(--edge);
+  color: var(--text-dim);
+  cursor: not-allowed;
+  box-shadow: none;
+  filter: none;
+}
+
+.search-row .btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 5px;
+}
+
+.btn--full {
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 8px;
+  margin-bottom: 6px;
+}
+
+.hint--error {
+  color: var(--bad);
+  margin-top: 0;
+}
+
+.drawer {
+  flex: 0 0 auto;
+  /* Fixed, not max-height — always exactly this tall regardless of content,
+     scrolling internally rather than growing or shrinking to fit. */
+  height: 190px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.drawer-idle {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drawer-idle::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+/* ---- Step rows (target/wait/harvest/dedupe/voyager/ingest/clean/enrich) ---- */
+.step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.step-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--edge-hi);
+}
+
+.step-spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  animation: scout-spin 0.8s linear infinite;
+}
+
+@keyframes scout-spin {
+  to { transform: rotate(360deg); }
+}
+
+.step-icon--done {
+  color: var(--good);
+}
+
+.step-icon--error {
+  color: var(--bad);
+}
+
+.step-icon--stopped {
+  color: var(--text-dim);
+}
+
+.step-body {
+  min-width: 0;
+}
+
+.step-label {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.step-label--pending {
+  color: var(--text-dim);
+}
+
+.step-label--active {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+.step-label--done {
+  color: var(--text);
+}
+
+.step-label--error {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.step-sub {
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--text-dim);
+}
+
+/* ---- Per-job log lines (indented under the active step) ---- */
+.log-line {
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--text-dim);
+  padding: 1px 0 1px 26px;
+  line-height: 1.5;
+  /* Safety net on top of popup.js's title/company truncation (which keeps
+     the trailing score/timing visible) — belt-and-suspenders in case
+     anything still doesn't fit. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-line--good {
+  color: var(--good);
+}
+
+.log-line--bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.log-line--muted {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.halt-banner {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.halt-text {
+  font-size: 12px;
+  color: var(--bad);
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+
+.halt-banner .btn {
+  background: var(--bad);
+}
+
+.halt-banner .btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.footer {
+  flex: 0 0 auto;
+  padding: 2px 16px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-dim);
+  border-top: 1px solid var(--edge);
+}
+
+.footer-heart {
+  color: var(--bad);
+}
+
+.footer a {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.footer a:hover {
+  color: var(--text-bright);
+  text-decoration: underline;
+}
+
+.offline {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.offline p {
+  margin: 4px 0;
+  color: var(--text-bright);
+  font-size: 14px;
+}
+
+.offline-hint {
+  color: var(--text-dim) !important;
+  font-size: 12px !important;
+}
+
+.offline code {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.offline-gif {
+  margin-top: 16px;
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--edge);
+}
+
+.hidden {
+  display: none;
+}

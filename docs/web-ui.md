@@ -1,7 +1,9 @@
-# Using the Web UI
+# Using Scout
 
 It's a single-user, local-only FastAPI + HTMX app — no login, no network
-exposure, just a job list and a **▶ Run Scout** button.
+exposure. Scraping is triggered from **Scout's Chrome extension**, not a
+button in this UI; the web UI is purely for browsing, filtering, and
+tracking the jobs a run finds.
 
 <div class="st-steps st-steps--loose" markdown>
 
@@ -25,14 +27,71 @@ This spins up the local FastAPI web server.
 <div class="st-step" markdown>
 <div class="st-step-num" markdown="span">:material-play:</div>
 <span class="st-step-kicker">Execute</span>
-### Run Scout
+### Run Scout from the extension
 
-Click ![Run Scout](images/run_scout.png){ style="height: 1.8em; vertical-align: middle; border-radius: 0.25rem;" }
-to launch the pipeline as a subprocess. It streams live progress into a "run
-drawer" — per-pass timers, live *N of M* counts, which model is doing what,
-and a scrolling event log of every job's outcome.
+Click the **Scout icon** in Chrome's toolbar (see [Configuration](getting-started.md)
+for loading the extension). Every run — however it's started — streams live
+into Scout's Chrome extension: Pass 1's harvest, then Pass 2/3 enrichment,
+through to a saved-jobs summary. While a run is happening, this web UI shows
+a lightweight status strip so it doesn't look stale, but the detailed live
+log always lives in the extension.
 
-![Live run drawer: three passes with timers, progress counts, and a streaming event log](images/run_drawer.gif){ .st-shot }
+Scout's Chrome extension gives you three ways to start a run:
+
+- **Saved Searches** — run a search from your config
+- **Custom Search** — scrape any pasted URL or job id, ad hoc
+- **Scrape Current Page** — harvest whatever LinkedIn jobs page is already open
+
+![Scout's Chrome extension streaming a run: live Pass 1 progress, then Pass 2/3 enrichment, through to a saved-jobs summary](images/run_drawer.gif){ .st-shot }
+
+#### Saved Searches
+
+Lists every `[[linkedin_searches]]` entry from your `config.toml`, each with
+its own **Run** button — click one to scrape just that search. The list is
+read through the running web server, so it's cached for the server's
+lifetime; if you edit `config.toml` afterward, click the **reload** icon
+next to the section title to re-read the file without restarting the server.
+
+#### Custom Search
+
+Paste any LinkedIn job URL or bare job id into the box and click **Run** to
+scrape it ad hoc, without adding it to your config. Accepts a search-results
+URL, a single `/jobs/view/<id>` link, or just the numeric job id — Scout's
+Chrome extension classifies what you pasted and routes it accordingly,
+entirely client-side.
+
+![Pasting a job URL into Custom Search and running it](images/custom_search.gif){ .st-shot }
+
+<div class="st-small-table" markdown>
+
+| Input | Example |
+|---|---|
+| Search-results URL | `https://www.linkedin.com/jobs/search-results/?keywords=product%20manager` |
+| Single-job URL | `https://www.linkedin.com/jobs/view/4123456789/` |
+| Bare job id | `4123456789` |
+
+</div>
+
+#### Scrape Current Page
+
+Harvests whatever LinkedIn jobs page is already open in your active Chrome
+tab — handy for a one-off search you haven't saved. Requires a LinkedIn jobs
+page to be open in the browser; the button stays disabled otherwise.
+
+![Using Scrape Current Page to harvest an already-open LinkedIn jobs page](images/scrape_current_page.gif){ .st-shot }
+
+</div>
+
+<div class="st-step" markdown>
+<div class="st-step-num" markdown="span">:material-open-in-new:</div>
+<span class="st-step-kicker">Fire Up</span>
+### Open the web UI
+
+Once a run has saved some jobs, open a new tab and go to
+`http://127.0.0.1:8000` — that's the web UI the rest of this page covers,
+served by the same local FastAPI server you started in the first step.
+
+![Opening a new tab and navigating to the Scout web UI](images/fire_up_scout_web.gif){ .st-shot }
 
 </div>
 

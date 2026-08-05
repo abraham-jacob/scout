@@ -445,13 +445,20 @@ class TestScoutRunRoute:
 
     @patch('app.main.check_setup')
     @patch('app.main._start_run_background')
-    def test_trigger_run_bare_job_id_labels_drawer_single_job(
+    def test_trigger_run_bare_job_id_labels_run_state_single_job(
             self, mock_start, mock_check_setup, client, reset_run_state):
-        """A bare job id gets the "Single job" drawer label, not "Ad-hoc URL"."""
+        """A bare job id gets the "Single job" run-state label, not "Ad-hoc URL".
+
+        Not asserted via response.text — the run banner (partials/run_banner.html)
+        no longer renders per-search labels, only a compact status line. This
+        label still matters to GET /api/extension/status, which the extension
+        popup reads (see app/main.py's _init_run_state).
+        """
         response = client.post("/scout/run", data={"url": "4440072975"})
 
         assert response.status_code == 200
-        assert "Single job" in response.text
+        with _run_lock:
+            assert _run["searches"][0]["name"] == "Single job"
 
     @patch('app.main._start_run_background')
     def test_trigger_run_already_running(self, mock_start, client, reset_run_state):
@@ -512,8 +519,10 @@ class TestRunStatusRoute:
         with _run_lock:
             assert _run["error"] == "Connection timeout"
 
-    def test_run_status_shows_search_name_not_raw_url(self, client, reset_run_state):
-        """The drawer's group heading shows the configured search's alias, not its URL."""
+    def test_run_status_banner_never_leaks_search_name_or_url(self, client, reset_run_state):
+        """The lightweight run banner shows only a step label, never a search
+        name or URL — that detail now lives in GET /api/extension/status
+        (see tests/test_extension_api.py) for the extension popup to render."""
         from app.main import _search_group
         with _run_lock:
             _run["running"] = True
@@ -522,7 +531,7 @@ class TestRunStatusRoute:
         response = client.get("/scout/status")
 
         assert response.status_code == 200
-        assert "Senior IC Bay Area" in response.text
+        assert "Senior IC Bay Area" not in response.text
         assert "linkedin.com" not in response.text
 
 
@@ -772,7 +781,7 @@ class TestRouteIntegration:
 
 
 class TestRunErrorDisplay:
-    """Test the run drawer's error box rendering."""
+    """Test the run banner's error box rendering."""
 
     def test_run_status_shows_error_box(self, client, reset_run_state):
         """GET /scout/status renders the red error box when _run['error'] is set."""

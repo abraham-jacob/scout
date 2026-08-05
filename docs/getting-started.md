@@ -8,14 +8,14 @@ Scout is a personal, single-user tool. Before you start, make sure you have:
 |---|---|
 | **:simple-python:{ .python } Python 3.12** + [pipenv](https://pipenv.pypa.io/) | Runtime & dependency management |
 | **:simple-git:{ .git } Git** | To clone the repo |
-| **:simple-googlechrome:{ .chrome } Google Chrome** with the [Claude in Chrome](https://claude.com/chrome) extension | Pass 1 drives your real, logged-in browser |
-| **:simple-claude:{ .claude } [Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Pass 1 always runs on Claude; Passes 2–3 do too unless you point them at an OpenAI-compatible model |
+| **:simple-googlechrome:{ .chrome } Google Chrome** with the **Scout extension** (`extension/`, loaded unpacked) | Pass 1 runs from inside your own logged-in browser session |
+| **:simple-claude:{ .claude } [Claude Code](https://claude.com/claude-code)** (the `claude` CLI) | Passes 2–3 run on it by default (Haiku/Sonnet); not needed if you point them at an OpenAI-compatible model instead. Pass 1 doesn't touch an LLM at all |
 | **:fontawesome-brands-linkedin:{ .linkedin } A LinkedIn account** logged into Chrome | The scrape runs inside your own session, using your saved searches |
 | *(Optional)* An OpenAI-compatible server (:simple-ollama: [Ollama](https://ollama.com/) etc.) | Run Passes 2–3 on that model: free and private |
 
 ## The setup journey
 
-Five steps, done once (steps 3–4 you'll revisit as your search evolves):
+Four steps, done once (steps 3–4 you'll revisit as your search evolves):
 
 <div class="st-steps" markdown>
 
@@ -34,25 +34,33 @@ pipenv install
 <div class="st-step" markdown>
 <div class="st-step-num">2</div>
 <span class="st-step-kicker">Connect accounts</span>
-### :simple-claude:{ .claude } Connect Claude Code
+### :material-puzzle:{ .chrome } Load the Scout extension & connect Claude Code
 
-Scout's browser scrape (Pass 1) always runs on Claude, and the enrichment
-passes do too unless you switch to the api backend. Sign up at claude.com to
-get Claude Code access with all the models Scout uses (Haiku and Sonnet).
+Pass 1 (the browser scrape) doesn't call an LLM at all — it's plain
+JavaScript running inside your own logged-in LinkedIn tab via the **Scout
+browser extension**. Passes 2–3 (cleaning and enrichment/scoring) run on
+Claude by default, so you'll want Claude Code too unless you're routing them
+to an OpenAI-compatible model instead.
+
+**Load the extension:**
+
+1. In Chrome, go to `chrome://extensions` and enable **Developer mode**
+   (top right).
+2. Click **Load unpacked** and select the `extension/` folder from your
+   clone.
+3. Make sure you're logged into LinkedIn in that same browser — the popup
+   talks to your local Scout server (`http://127.0.0.1:8000`), so start the
+   server (step 5 below) before using it.
+
+![Loading the Scout extension unpacked in chrome://extensions](images/scout_extension_install.gif){ .st-shot }
+
+**Connect Claude Code** (skip if you're using the api backend for Passes 2–3):
 
 !!! tip "You need a paid Claude plan"
     Claude Code requires a [subscription](https://claude.com/pricing) — the
     **$20/month Pro plan** is enough to run Scout end-to-end.
 
-Then:
-
 - Install the [`claude` CLI (Claude Code)](https://docs.claude.com/en/docs/claude-code/quickstart) and confirm it runs (`claude --version`).
-- Install the [Claude in Chrome](https://claude.com/chrome) extension —
-  Pass 1 drives your browser through it.
-- Turn **off** *Chrome Settings → Downloads → "Ask where to save each file
-  before downloading"*. Pass 1 hands scraped data off through a browser
-  download; a save dialog would stall the agent. See the [FAQ](faq.md) if
-  you hit this.
 
 </div>
 
@@ -107,13 +115,126 @@ max_workers = 4                 # Pass 2/3 parallelism
 | `[[linkedin_searches]]` | ✅ (≥1) | Named LinkedIn saved-search URLs scraped every run |
 | `[filters]` | ✅ | Companies to drop before any LLM call |
 | `[scoring]` | ✅ | Fit/criteria weights and the dealbreaker score cap |
-| `[logging]` | ✅ | Log directory (daily app log + opt-in model-call log) |
 | `[llm]` | ✅ | Backend (`claude` / `api`) and Pass 2/3 parallelism |
 | `[llm.api]` | when `backend = "api"` | Server URL, model, API key, timeout |
 | `[llm.api.clean]` / `[llm.api.enrich]` | optional | Per-pass request params merged into the api backend's chat-completion call |
-| `[scrape]` | optional | Browser download folder (defaults to `~/Downloads`) |
+| `[logging]` | ✅ | Log directory (daily app log + opt-in model-call log) |
+| `[scrape]` | optional | Overall wall-clock guardrail for a run |
+| `[extension]` | optional | Jitter bounds (ms) for the Scout browser extension's per-job fetch loop |
+
+#### Define your role types — `[[roles]]`
+
+Defines the role types Scout keeps. **At least one** role is required — with
+zero roles there is nothing for Scout to keep, so the pipeline (and the web
+UI) refuse to run. There are no built-in default roles.
+
+```toml title="TOML"
+[[roles]]
+name = "Product Manager"
+definition = """the core of the job is owning product strategy and \
+execution... Examples: Product Manager, Senior/Group PM, Director of \
+Product. Project/program management does not count."""
+profile = "profile_pm.md"   # optional — omit to score on the resume alone
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `name` | ✅ | Label stored in the DB and shown in the UI. Chip/filter colors are assigned automatically in the order roles are listed |
+| `definition` | ✅ | Classification guidance for the enrichment model — what counts, example titles, explicit exclusions. Jobs matching no configured role are classified `Other` and dropped |
+| `profile` | optional | Markdown file in `profiles/` the role is scored against; omit to score on the resume alone |
+
+#### Set up your :fontawesome-brands-linkedin:{ .linkedin } LinkedIn searches — `[[linkedin_searches]]` { #linkedin_searches }
+
+Defines the LinkedIn saved-search URLs Scout scrapes every run. At least
+**one** entry is required.
+
+**To get your search URL:**
+
+1. Go to the [LinkedIn Jobs](https://www.linkedin.com/jobs/) page.
+2. In the search bar, describe the job you're looking for and apply any filters (Location, Remote, etc.).
+3. Copy the URL straight from your browser's address bar.
+
+![Setting up a LinkedIn job search](images/linkedin-search.gif)
+
+Paste this URL into your config block:
+
+```toml title="TOML"
+[[linkedin_searches]]
+name = "Some search name..."
+url = "https://www.linkedin.com/jobs/search-results/?keywords=..."
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `name` | ✅ | Short alias shown in the run drawer/logs in place of the raw URL; must be unique (case-insensitive) |
+| `url` | ✅ | The exact LinkedIn jobs-search URL; must start with `https://www.linkedin.com/` |
+
+!!! tip "You can add more than one"
+    Repeat the `[[linkedin_searches]]` block for every saved search you
+    want — every configured search is scraped on every run, there's no need
+    to pick just one. Re-scraping the same search repeatedly is safe: jobs
+    already in the database are dropped before any LLM call, so nothing is
+    double-processed or double-billed.
+
+#### Filter out companies — `[filters]`
+
+Companies to drop before spending any LLM call on their jobs.
+
+```toml title="TOML"
+[filters]
+exclude_companies = ["Capital One"]   # dropped before any LLM call; [] is fine
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `exclude_companies` | ✅ | Company names dropped before any LLM call; `[]` is fine |
+
+#### Weight the match score — `[scoring]`
+
+Controls how fit and criteria combine into the final match score, and the
+penalty applied when a dealbreaker is hit.
+
+Pass 3 produces two 0–100 subscores per job: `fit_score` (how well your
+**resume** and role profile match what the job asks for) and `criteria_score`
+(how well the job satisfies your **`criteria.md`** — workplace, compensation,
+domains, company preferences — independent of resume fit). The final
+`match_score` shown in the UI is a weighted sum of the two:
+
+```
+match_score = fit_weight * fit_score + criteria_weight * criteria_score
+```
+
+If a job has no `criteria_score` (no `criteria.md` configured), the match
+score is `fit_score` alone. If the model flagged any dealbreakers on the job,
+the score is then capped at `dealbreaker_cap`, no matter how high the
+weighted sum came out.
+
+```toml title="TOML"
+[scoring]
+fit_weight = 0.85        # weights must sum to 1
+criteria_weight = 0.15
+dealbreaker_cap = 30.0   # score ceiling (0-100) when a dealbreaker is hit
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `fit_weight` | ✅ | Weight applied to `fit_score` in the final match score; must sum to 1 with `criteria_weight` |
+| `criteria_weight` | ✅ | Weight applied to `criteria_score` in the final match score; must sum to 1 with `fit_weight` |
+| `dealbreaker_cap` | ✅ | Score ceiling (0–100) applied when the job has any dealbreakers, regardless of the weighted fit/criteria sum |
+
+!!! info ""
+    - **New scrape runs** score automatically.
+    - **Existing jobs**: run `pipenv run python -m scripts.backfill_scores`
+      (one Sonnet call per unscored job; updates only the scoring columns).
+    - **Changed your mind about weights or the cap?**
+      `pipenv run python -m scripts.backfill_scores --recompute` rebuilds every
+      final score from the stored subscores with zero LLM calls.
 
 #### Pick the backend & its parallelism — `[llm]`
+
+Selects which backend runs Passes 2–3 (description cleaning and
+enrichment/scoring), and how wide their worker pool runs. Pass 1 (the
+browser scrape) isn't affected — it never calls an LLM at all.
 
 ```toml title="TOML"
 [llm]
@@ -123,7 +244,7 @@ max_workers = 4
 
 | Field | Required | Notes |
 |---|---|---|
-| `backend` | ✅ | `"claude"` or `"api"` — no default, so the config always states which one is in use. Only Passes 2–3 move; Pass 1 (the browser scrape) always runs on Claude |
+| `backend` | ✅ | `"claude"` or `"api"` — no default, so the config always states which one is in use. Only Passes 2–3 move; Pass 1 (the browser scrape) doesn't call an LLM at all, so there's nothing to route there |
 | `max_workers` | ✅ | Width of the Pass 2/3 worker pool. Claude can go wide (bounded mainly by prompt-cache-write dedup, default 2); an api-backend server is bounded by its own VRAM/throughput — a 16GB box running a 20B model may only manage `max_workers = 1` |
 
 ??? note ":material-server-network: Routing Passes 2–3 to an OpenAI-compatible endpoint — `[llm.api]`"
@@ -194,92 +315,51 @@ max_workers = 4
     [OpenAI-compatible Backend](openai-compatible-backend.md) has the full picture, including
     warm-up and retry behavior.
 
-#### Set up your :fontawesome-brands-linkedin:{ .linkedin } LinkedIn searches — `[[linkedin_searches]]` { #linkedin_searches }
+#### Set the log directory — `[logging]`
 
-Defines the LinkedIn saved-search URLs Scout scrapes every run. At least
-**one** entry is required.
-
-**To get your search URL:**
-
-1. Go to the [LinkedIn Jobs](https://www.linkedin.com/jobs/) page.
-2. In the search bar, describe the job you're looking for and apply any filters (Location, Remote, etc.).
-3. Copy the URL straight from your browser's address bar.
-
-![Setting up a LinkedIn job search](images/linkedin-search.gif)
-
-Paste this URL into your config block:
+Where Scout writes its daily app log, and the opt-in model-call log.
 
 ```toml title="TOML"
-[[linkedin_searches]]
-name = "Some search name..."
-url = "https://www.linkedin.com/jobs/search-results/?keywords=..."
+[logging]
+dir = "~/.local/state/scout/logs"   # daily app log + opt-in model-call log;
+                                    # ~ expands, relative paths = project root
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `name` | ✅ | Short alias shown in the run drawer/logs in place of the raw URL; must be unique (case-insensitive) |
-| `url` | ✅ | The exact LinkedIn jobs-search URL; must start with `https://www.linkedin.com/` |
+| `dir` | ✅ | Daily app log + opt-in model-call log; `~` expands, relative paths are project-root-relative |
 
-!!! tip "You can add more than one"
-    Repeat the `[[linkedin_searches]]` block for every saved search you
-    want — every configured search is scraped on every run, there's no need
-    to pick just one. Re-scraping the same search repeatedly is safe: jobs
-    already in the database are dropped before any LLM call, so nothing is
-    double-processed or double-billed.
+#### Set a run timeout — `[scrape]`
 
-#### Define your role types — `[[roles]]`
-
-Defines the role types Scout keeps. **At least one** role is required — with
-zero roles there is nothing for Scout to keep, so the pipeline (and the web
-UI) refuse to run. There are no built-in default roles.
+Optional. The overall wall-clock guardrail for a run.
 
 ```toml title="TOML"
-[[roles]]
-name = "Product Manager"
-definition = """the core of the job is owning product strategy and \
-execution... Examples: Product Manager, Senior/Group PM, Director of \
-Product. Project/program management does not count."""
-profile = "profile_pm.md"   # optional — omit to score on the resume alone
+[scrape]
+run_timeout_minutes = 30
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `name` | ✅ | Label stored in the DB and shown in the UI. Chip/filter colors are assigned automatically in the order roles are listed |
-| `definition` | ✅ | Classification guidance for the enrichment model — what counts, example titles, explicit exclusions. Jobs matching no configured role are classified `Other` and dropped |
-| `profile` | optional | Markdown file in `profiles/` the role is scored against; omit to score on the resume alone |
+| `run_timeout_minutes` | optional | Overall wall-clock guardrail for a run; default 30 |
 
-??? note ":material-tune: The rest of the config — `[filters]`, `[scoring]`, `[logging]`, `[scrape]`"
+#### Tune the extension's fetch jitter — `[extension]`
 
-    ```toml title="TOML"
-    [filters]
-    exclude_companies = ["Capital One"]   # dropped before any LLM call; [] is fine
+Optional — omit unless you've changed the defaults. Jitter bounds for the
+Scout browser extension's per-job Voyager fetch loop.
 
-    [scoring]
-    fit_weight = 0.85        # weights must sum to 1
-    criteria_weight = 0.15
-    dealbreaker_cap = 30.0   # score ceiling (0-100) when a dealbreaker is hit
+```toml title="TOML"
+[extension]
+min_delay_ms = 3000
+max_delay_ms = 8000
+```
 
-    [logging]
-    dir = "~/.local/state/scout/logs"   # daily app log + opt-in model-call log;
-                                        # ~ expands, relative paths = project root
-
-    [scrape]                            # OPTIONAL — omit unless you've changed
-    download_dir = "~/Downloads"        # Chrome's download folder. Defaults to
-                                        # ~/Downloads (works on Win/Mac/Linux).
-    ```
-
-    | Field | Section | Required | Notes |
-    |---|---|---|---|
-    | `exclude_companies` | `[filters]` | ✅ | Companies dropped before any LLM call; `[]` is fine |
-    | `fit_weight` | `[scoring]` | ✅ | Must sum to 1 with `criteria_weight` |
-    | `criteria_weight` | `[scoring]` | ✅ | Must sum to 1 with `fit_weight` |
-    | `dealbreaker_cap` | `[scoring]` | ✅ | Score ceiling (0–100) when a dealbreaker is hit |
-    | `dir` | `[logging]` | ✅ | Daily app log + opt-in model-call log; `~` expands, relative paths are project-root-relative |
-    | `download_dir` | `[scrape]` | optional | Chrome's download folder; defaults to `~/Downloads` (works on Win/Mac/Linux) |
+| Field | Required | Notes |
+|---|---|---|
+| `min_delay_ms` / `max_delay_ms` | optional | Jitter bounds (ms) for the extension's per-job fetch loop; defaults to 3000/8000 |
 
 </div>
 
-<div class="st-step" markdown>
+<div class="st-step st-step--keep-line" markdown>
 <div class="st-step-num">4</div>
 <span class="st-step-kicker">Configure</span>
 ### :material-file-document: Scoring files
@@ -382,53 +462,18 @@ Broad preferences that apply to any job, like compensation, location, or hard de
     - **DEALBREAKER**: Crypto / Web3
     ```
 
-Once you've set up your configuration and scoring files, your `profiles/` directory should look something like this:
-
-![A well-configured profiles directory](images/profiles_directory.png)
-
-!!! info ""
-    - **New scrape runs** score automatically.
-    - **Existing jobs**: run `pipenv run python -m scripts.backfill_scores`
-      (one Sonnet call per unscored job; updates only the scoring columns).
-    - **Changed your mind about weights or the cap?**
-      `pipenv run python -m scripts.backfill_scores --recompute` rebuilds every
-      final score from the stored subscores with zero LLM calls.
-
-</div>
-
-<div class="st-step" markdown>
-<div class="st-step-num">5</div>
-<span class="st-step-kicker">Run</span>
-### :material-play-circle: Run Scout
-
-!!! warning "Stay logged into LinkedIn in Chrome"
-    Before running Scout, make sure Chrome has a tab open where you're
-    actively logged into LinkedIn with your own credentials — the scrape
-    runs inside that session, not a headless one.
-
-```bash title="Terminal"
-pipenv run uvicorn app.main:app        # web UI at http://127.0.0.1:8000
-```
-
-Click **▶ Run Scout**.
-
-**OR**
-
-Run the pipeline directly from the terminal:
-
-To scrape every search configured in `config.toml`:
-```bash title="Terminal"
-pipenv run python -m agent.runner
-```
-
-For a single ad-hoc URL, ignoring the config:
-```bash title="Terminal"
-pipenv run python -m agent.runner --url <linkedin_search_url>
-```
-
 </div>
 
 </div>
 
-From here: read [Using the Web UI](web-ui.md) to see what a run produces, or
-[Architecture](architecture.md) for how the pipeline works under the hood.
+## Final Check
+
+!!! warning "Important"
+    Once you've set up your configuration and scoring files, your
+    `profiles/` directory should look something like this:
+
+    ![A well-configured profiles directory](images/profiles_directory.png)
+
+From here: read [Using Scout](web-ui.md) to launch Scout and see what a
+run produces, or [Architecture](architecture.md) for how the pipeline works
+under the hood.

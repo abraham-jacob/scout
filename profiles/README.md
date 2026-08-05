@@ -7,7 +7,7 @@ machine.
 
 ## `config.toml` (**required**)
 
-The user config: five required sections, plus one optional `[scrape]`:
+The user config: five required sections, plus two optional (`[scrape]`, `[extension]`):
 
 ```toml
 [[linkedin_searches]]
@@ -30,12 +30,18 @@ dealbreaker_cap = 30.0   # score ceiling (0-100) when a dealbreaker is hit
 dir = "~/.local/state/scout/logs"   # daily app log + opt-in model-call log;
                                     # ~ expands, relative paths = project root
 
-[scrape]                            # OPTIONAL — omit unless you've changed
-download_dir = "~/Downloads"        # Chrome's download folder. Defaults to
-                                    # ~/Downloads (works on Win/Mac/Linux).
+[scrape]                            # OPTIONAL — only used by the CDP-driven
+download_dir = "~/Downloads"        # Pass 1 fallback (see main README), not
+                                    # the extension. Chrome's download folder;
+                                    # defaults to ~/Downloads (Win/Mac/Linux).
 # run_timeout_minutes = 30          # overall wall-clock guardrail for a full
                                     # run; raise it if you have many searches
                                     # or a slower LLM backend. Defaults to 30.
+
+[extension]                         # OPTIONAL — omit unless you've changed
+# min_delay_ms = 3000                # jitter bounds (ms) for the browser
+# max_delay_ms = 8000                # extension's per-job Voyager fetch loop.
+                                    # Defaults to 3000/8000.
 
 [llm]                               # REQUIRED
 backend = "claude"                  # "claude" or "api" (no default)
@@ -47,8 +53,10 @@ max_workers = 2                     # Pass 2/3 parallelism; tune to the backend
 `backend` says which model backend runs the two headless passes — description
 cleaning (Pass 2) and enrichment/scoring (Pass 3). There's no default: you must
 state `"claude"` or `"api"` explicitly, so the config always says which one is
-in use. Pass 1 (the browser scrape) always runs on Claude — it drives the
-browser and can't move to a text-completion model.
+in use. Pass 1 (the browser scrape) doesn't touch an LLM at all via the
+default browser-extension path — it's plain JavaScript running in your Chrome
+session. The older CDP-driven fallback path does run on Claude specifically,
+since driving a browser is an agentic task a text-completion model can't do.
 
 `max_workers` is the width of the Pass 2/3 worker pool (a positive integer).
 Tune it to the active backend: a Claude run can go wide (it's bounded mainly by
@@ -115,7 +123,7 @@ say) is left for the server to reject.
 ### `[[linkedin_searches]]`
 
 Defines the LinkedIn saved-search URLs Scout scrapes every run. Each entry
-has a `name` (a short alias shown in the run drawer/logs in place of the raw
+has a `name` (a short alias shown in the extension popup/logs in place of the raw
 URL, which can run into the hundreds of characters) and a `url` (the exact
 LinkedIn jobs-search URL — copy it straight from the browser address bar
 after setting up the search/alert on LinkedIn). At least **one** entry is

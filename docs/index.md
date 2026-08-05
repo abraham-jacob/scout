@@ -93,7 +93,7 @@ you should hand to an agent. So I did.
 ## Explore the docs
 
 - **[Configuration](getting-started.md)** — requirements, setup walkthrough, and the full `config.toml`/scoring-file reference
-- **[Using the Web UI](web-ui.md)** — filtering, job cards, match scores, the application pipeline
+- **[Using Scout](web-ui.md)** — filtering, job cards, match scores, the application pipeline
 - **[OpenAI-compatible Backend](openai-compatible-backend.md)** — run Passes 2–3 on Ollama or any other OpenAI-compatible server, local or remote
 - **[Architecture](architecture.md)** — how the three-pass pipeline actually works
 - **[Contributing](contributing.md)** — conventions for working on Scout itself
