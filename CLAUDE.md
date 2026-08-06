@@ -36,10 +36,6 @@ pipenv run python -m agent.runner --url <linkedin_url>   # scrape one ad-hoc URL
 pipenv run python -m app.database
 
 # Tests (pytest, config in pytest.ini — testpaths=tests, asyncio_mode=auto)
-pipenv run pytest                          # all tests
-pipenv run pytest tests/test_agent_runner.py           # one file
-pipenv run pytest tests/test_agent_runner.py::TestName::test_case   # one test
-pipenv run pytest -m unit                  # by marker (unit / integration)
 pipenv run unit-tests                      # full suite with junit + HTML coverage
 ```
 
@@ -302,33 +298,20 @@ in `app/main.py`.
 `_migrate_scrape_runs_schema()`, was retired once no pre-migration databases
 remained).
 
-### `agent/tools.py`
-Plain Python DB helpers (`create_scrape_run`, `get_existing_job_ids`, `save_jobs`,
-etc.) called directly by `runner.py`.
-
 ### The LLM-calling layer (`agent/llm_common.py`, `agent/claude.py`, `agent/llm_api.py`, `agent/llm.py`)
 `runner.py` holds only pipeline orchestration; every function that actually talks to
 a backend lives in one of four small modules, one-directional
 (`runner.py` → `llm.py` → {`claude.py`, `llm_api.py`} → `llm_common.py`, never the
-reverse — this is what keeps the import graph acyclic):
+reverse — this is what keeps the import graph acyclic).
 - `agent/llm_common.py` — cross-cutting plumbing only, no backend logic: progress
   events (`emit`/`emit_log`/`PROGRESS_SENTINEL`), `log_model_call()`, token/cost
   accounting (`_add_usage`/`print_token_summary`/`_tokens`), and `SetupError` (raised
   by both `runner.py`'s `check_setup` and `llm_api.py`'s `_verify_api_llm` — neither
   owns the other, so it lives in the shared leaf module).
-- `agent/claude.py` — everything that talks to the Claude CLI: `run_claude` (Pass 1
-  browser scrape), `_run_claude_headless` (Pass 2/3 claude backend), `claude_executable`,
-  `_kill_process_tree`, and the `SCRAPER_MODEL`/`CLEAN_MODEL`/`ENRICH_MODEL` constants.
-- `agent/llm_api.py` — everything that talks to the OpenAI-compatible endpoint:
-  `_run_api_llm`, `_verify_api_llm`, `_warm_api_llm`, `_api_endpoint`.
-- `agent/llm.py` — the thin router: `run_headless()` dispatches to `claude.py` or
-  `llm_api.py` based on `config.llm_backend`.
 
 `runner.py` imports directly from whichever module owns a given name (e.g.
 `CLEAN_MODEL`/`ENRICH_MODEL` come straight from `agent.claude`, not funneled through
 `agent.llm`) — only the actual Pass 2/3 backend *dispatch* goes through `llm.py`.
-Tests mirror this: `tests/test_agent_llm_common.py`, `tests/test_agent_claude.py`,
-`tests/test_agent_llm_api.py`, `tests/test_agent_llm.py`.
 
 ## Conventions
 
@@ -381,38 +364,11 @@ Tests mirror this: `tests/test_agent_llm_common.py`, `tests/test_agent_claude.py
 
 ## Documentation site
 
-`docs/` + `mkdocs.yml` is a MkDocs Material site, deployed to GitHub Pages
-(https://abraham-jacob.github.io/scout/) by `.github/workflows/docs.yml` on
-every push to `main` that touches `docs/**` or `mkdocs.yml` (GitHub Pages
-"Source" is set to "GitHub Actions" in repo settings — a one-time manual step,
-already done). Build/preview locally with `pipenv run mkdocs build --strict`
-and `pipenv run mkdocs serve`.
-
-- **Reusable CSS components** live in `docs/stylesheets/extra.css` — reuse
-  these for new pages/sections rather than inventing new patterns: `.st-step*`
-  (numbered/icon-badge stepper, used by the Configuration, Web UI, and
-  Architecture pages), `.st-hero`/`.st-cta`/`.st-flow` (the Home page's
-  product-landing hero), `.arch-*` (the Architecture page's pipeline-flow
-  diagram with cost pills), `.st-pill` (required/optional field badges in
-  config-reference tables).
-- **`overrides/partials/`** holds Material theme partial overrides
-  (`copyright.html`, `social.html`) wired via `theme.custom_dir: overrides` in
-  `mkdocs.yml` — these build the site's pinned, three-zone footer (copyright
-  left, source/license center, Buy Me a Coffee/Ko-fi badges right) since
-  Material's default `extra.social` config only supports icon glyphs, not
-  custom badge images. `pipenv run mkdocs serve`'s live-reload watcher does
-  **not** reliably pick up changes under `overrides/` or structural
-  `mkdocs.yml` edits (e.g. `theme.custom_dir`, `theme.features`) — kill and
-  restart the server after editing those, rather than trusting hot-reload.
-- The Local LLM Backend page was renamed to `docs/openai-compatible-backend.md`
-  ("OpenAI-compatible Backend") — Passes 2–3 can point at any
-  OpenAI-compatible endpoint, local (e.g. Ollama) or a remote paid API, not
-  just a local model; keep that framing if editing it further.
-- Before trusting "the live site looks wrong" during a docs change: GitHub
-  Pages serves `docs/stylesheets/extra.css` with `Cache-Control: max-age=600`,
-  and browsers cache it aggressively — a stale-cache render is far more
-  likely than a real regression. Check in an incognito window or with a
-  cache-busting fetch before debugging further.
+`docs/` + `mkdocs.yml` is a MkDocs Material site deployed to GitHub Pages. Build
+with `pipenv run mkdocs build --strict`. **See `docs/CLAUDE.md`** for the CSS
+component system, the `overrides/partials/` footer setup, and the hot-reload and
+stale-cache gotchas — read it before editing `mkdocs.yml` or `overrides/` too,
+since those live outside `docs/` and won't load it automatically.
 
 ## LinkedIn scraping notes (in `scrape_prompt.md` and `extension/content.js`)
 
