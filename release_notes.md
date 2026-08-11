@@ -8,6 +8,36 @@ to depend on, so a version bump communicates *how much changed*, not a
 compatibility contract. `extension/manifest.json`'s `version` field is the
 single source of truth for the project's version number.
 
+## [Unreleased] - 0.2.0
+
+### Added
+
+- **Search last-run pill** in the extension popup: each saved search shows
+  an elapsed-time-since-last-run pill (green → red buckets as it goes
+  stale), refreshed after every run, so it's obvious at a glance which
+  searches need re-running.
+- **Favicon** for the web UI.
+- **Dismiss button** on the web UI's run-failure banner — previously
+  nothing cleared it short of starting a new run.
+
+### Fixed
+
+- `save_jobs()` could crash the whole pipeline on a `job_id` insert race
+  between overlapping runs; it now uses `ON CONFLICT DO NOTHING` so a
+  collision is skipped instead of fatal.
+- The docs deploy was broken since `docs/contributing.md`'s snippet-include
+  of `CONTRIBUTING.md` couldn't resolve the relative link to
+  `release_notes.md` (which lives at the repo root, outside `docs/`),
+  failing `mkdocs build --strict` and leaving the live site stale on every
+  Pages deploy. The link is now absolute.
+
+### Changed
+
+- Trimmed `CLAUDE.md` of content a session can reconstruct by reading the
+  repo (pytest invocations, per-module function inventories); moved the
+  Documentation site section to `docs/CLAUDE.md`, lazy-loaded only when
+  working under `docs/`.
+
 ## [0.1.0] - 2026-08-01
 
 ### Added
