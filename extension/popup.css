@@ -373,6 +373,8 @@ body {
 }
 
 .search-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-bright);
@@ -380,6 +382,37 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Pill + Run button as one non-shrinking group pinned to the row's right
+   edge, so the name above always gets whatever space is left. */
+.search-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Last-run pill — same fixed hex set in both themes (status colors, not
+   part of the ink/card palette, matching how --good/--bad are already
+   theme-invariant). Bucket colors ramp green (fresh) -> yellow -> red
+   (stale); see popup.js's runPillInfo(), mirrored from
+   mockups/search_last_run_pill.html. */
+.run-pill {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.run-pill--b0 { background: rgba(34, 197, 94, 0.15);  color: #16a34a; }
+.run-pill--b1 { background: rgba(132, 204, 22, 0.15); color: #65a30d; }
+.run-pill--b2 { background: rgba(234, 179, 8, 0.18);  color: #ca8a04; }
+.run-pill--b3 { background: rgba(217, 119, 6, 0.18);  color: #d97706; }
+.run-pill--b4 { background: rgba(234, 88, 12, 0.18);  color: #ea580c; }
+.run-pill--b5 { background: rgba(220, 38, 38, 0.18);  color: #dc2626; }
+.run-pill--never { background: rgba(100, 116, 139, 0.15); color: var(--text-dim); }
 
 .custom-row {
   display: flex;
@@ -463,8 +496,11 @@ body {
 .drawer {
   flex: 0 0 auto;
   /* Fixed, not max-height — always exactly this tall regardless of content,
-     scrolling internally rather than growing or shrinking to fit. */
-  height: 190px;
+     scrolling internally rather than growing or shrinking to fit. Trimmed
+     9px from 190 to reclaim room for the saved-search rows' new pill —
+     without it the popup's real (800x600-capped) render height clipped the
+     bottom of this pane. */
+  height: 181px;
   border: 1px solid var(--edge);
   border-radius: 12px;
   background: var(--card);
