@@ -15,6 +15,7 @@ Routes:
   POST /api/extension/ingest      — accept extension-scraped jobs, run Pass 2/3
   POST /api/extension/kill        — abort the current run's Pass 2/3 subprocess
   GET  /api/extension/status      — run state as JSON (browser extension popup polling)
+  GET  /static/...                — favicon and other static assets (see app/static/)
 """
 
 import copy
@@ -31,12 +32,13 @@ from pathlib import Path
 from fastapi import Body, FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from agent.runner import SetupError, check_setup, extract_single_job_id, resolve_scan_url
 from agent.step_keys import StepKey
 from agent.tools import get_existing_job_ids
-from app.config import load_config, load_roles, role_color_map
+from app.config import Config, load_config, load_roles, role_color_map
 from app.database import JOB_STATUSES, get_connection, init_db
 from app.logging_setup import setup_logging
 
@@ -55,6 +57,9 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
+# Serves the favicon (the same Scout logo used in extension/icons/) — see
+# app/templates/index.html's <link rel="icon"> tags.
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")
 
 # Step scaffolding for the run state. Global steps run once per run; search
 # steps run once per configured LinkedIn search (keys must match runner.py's
@@ -658,9 +663,55 @@ async def run_status(request: Request) -> HTMLResponse:
     return _render_run_banner(request)
 
 
+@app.post("/scout/dismiss", response_class=HTMLResponse)
+async def dismiss_run_error(request: Request) -> HTMLResponse:
+    """Clear a stuck run-failure banner without waiting for the next run to start."""
+    with _run_lock:
+        _run["error"] = None
+    return _render_run_banner(request)
+
+
 # ---------------------------------------------------------------------------
 # Browser extension API (Pass 1 acquisition — see mockups/extension_popup.html)
 # ---------------------------------------------------------------------------
+
+def _extension_searches_payload(config: Config) -> dict:
+    """Build GET /api/extension/searches's response body from a loaded Config.
+
+    Shared by that route and POST /api/extension/reload-config, which returns
+    the identical shape after re-reading profiles/config.toml. Each search
+    gets elapsed_hours since its last run, for the popup's last-run pill —
+    only scrape_runs rows that produced at least one job count as a real last
+    run (a row with none means the run failed or was aborted before anything
+    landed, so it shouldn't "reset the clock").
+    """
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT sr.search_name, MAX(sr.run_at)
+        FROM scrape_runs sr
+        WHERE EXISTS (SELECT 1 FROM jobs j WHERE j.scrape_run_id = sr.run_id)
+        GROUP BY sr.search_name
+    """).fetchall()
+    conn.close()
+    last_run_by_name = dict(rows)
+
+    now = datetime.now()
+    return {
+        "searches": [
+            {
+                "name": s.name,
+                "url": s.url,
+                "elapsed_hours": (
+                    (now - last_run_by_name[s.name]).total_seconds() / 3600
+                    if s.name in last_run_by_name else None
+                ),
+            }
+            for s in config.linkedin_searches
+        ],
+        "min_delay_ms": config.extension_min_delay_ms,
+        "max_delay_ms": config.extension_max_delay_ms,
+    }
+
 
 @app.get("/api/extension/searches")
 async def extension_searches() -> dict:
@@ -669,12 +720,7 @@ async def extension_searches() -> dict:
     Single source of truth stays profiles/config.toml — the extension holds
     no config of its own beyond what it fetches here.
     """
-    config = load_config()
-    return {
-        "searches": [{"name": s.name, "url": s.url} for s in config.linkedin_searches],
-        "min_delay_ms": config.extension_min_delay_ms,
-        "max_delay_ms": config.extension_max_delay_ms,
-    }
+    return _extension_searches_payload(load_config())
 
 
 @app.post("/api/extension/reload-config")
@@ -694,11 +740,7 @@ async def extension_reload_config() -> JSONResponse:
         config = load_config()
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
-    return JSONResponse({
-        "searches": [{"name": s.name, "url": s.url} for s in config.linkedin_searches],
-        "min_delay_ms": config.extension_min_delay_ms,
-        "max_delay_ms": config.extension_max_delay_ms,
-    })
+    return JSONResponse(_extension_searches_payload(config))
 
 
 @app.post("/api/extension/dedupe")

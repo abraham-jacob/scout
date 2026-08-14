@@ -66,7 +66,12 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
     via one earlier get_existing_job_ids() fetch) already dropped jobs already in
     the DB, applied, closed, or from an excluded company (config [filters]
     exclude_companies) — nothing between that filter and here changes a job's
-    company, so this trusts it rather than re-checking. Detects reposts, and
+    company, so this trusts it rather than re-checking. That earlier dedup is a
+    point-in-time DB snapshot, though, and clean+enrich can take minutes, so a
+    concurrently-running scrape (e.g. a manually-launched `python -m agent.runner`
+    racing an extension-triggered run, or two saved searches surfacing the same
+    posting) can still insert the same job_id first; ON CONFLICT DO NOTHING
+    below makes that a silent skip instead of a crashed run. Detects reposts, and
     persists each job's role_type, description_summary, and tags (produced by
     the per-job enrichment step in runner.py). Returns a summary of what was
     saved.
@@ -87,7 +92,7 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
         original_id = find_original_job(conn, job["title"], company)
         is_repost = original_id is not None
 
-        conn.execute(
+        result = conn.execute(
             """
             INSERT INTO jobs (
                 job_id, scrape_run_id, title, company, location, role_type,
@@ -96,6 +101,8 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
                 fit_score, criteria_score, dealbreakers, match_reason,
                 match_score, status, is_repost, original_job_id, date_scraped
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)
+            ON CONFLICT (job_id) DO NOTHING
+            RETURNING job_id
             """,
             [
                 job_id,
@@ -121,7 +128,11 @@ def save_jobs(scrape_run_id: str, jobs: list[dict]) -> dict:
                 original_id,
                 datetime.now(timezone.utc).isoformat(),
             ],
-        )
+        ).fetchall()
+
+        if not result:
+            # Lost a race with a concurrent run that already saved this job_id.
+            continue
 
         if is_repost:
             reposts += 1

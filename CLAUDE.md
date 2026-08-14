@@ -340,6 +340,17 @@ reverse — this is what keeps the import graph acyclic).
   create`) and stop; the human reviews and merges it themselves. Steps that
   come after a merge (tagging, `gh release create`, deleting the spent
   branch) block on that human action.
+- **Every PR that adds a feature or fixes a bug updates
+  [`release_notes.md`](release_notes.md).** Add/append to the current
+  in-progress `## [Unreleased] - x.y.z` section (create it if this is the
+  first PR of the cycle) under the appropriate `Added`/`Changed`/`Fixed`/
+  `Removed` subheading, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
+  style — don't leave it all to be reconstructed from commit messages at
+  cut time. Skip this for purely internal changes with no user-visible
+  effect (docs typo fixes, test-only changes, CI config). At release-cut
+  time (`CONTRIBUTING.md`'s "Releasing" section), the `[Unreleased]` heading
+  is renamed to `## [x.y.z] - YYYY-MM-DD` and the section is reviewed for
+  completeness, not written from scratch.
 - **CI runs on every push and PR** via [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
   (`pipenv run unit-tests` — tests + branch coverage), triggered on `main`,
   `release/**`, and `hotfix/**`. Run it locally before opening a PR rather

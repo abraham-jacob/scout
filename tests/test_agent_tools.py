@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
+import app.database as app_database
 from agent.tools import (
     _unwrap_linkedin_redirect,
     create_scrape_run,
@@ -213,3 +214,45 @@ class TestSaveJobs:
         # Verify the execute was called and the URL was unwrapped
         call_args = mock_conn.execute.call_args_list
         assert any("example.com" in str(call) for call in call_args)
+
+    def test_save_jobs_skips_duplicate_job_id_instead_of_crashing(self, tmp_path, monkeypatch):
+        """A job_id that's already in the DB (e.g. a concurrent run won the
+        race to insert it first — see save_jobs' docstring) is skipped via
+        ON CONFLICT DO NOTHING rather than raising a ConstraintException.
+
+        Uses a real DuckDB connection (not the mocked_conn pattern above)
+        since this is exercising actual DuckDB conflict-handling behavior,
+        not just call shape.
+        """
+        db_path = tmp_path / "test.duckdb"
+        monkeypatch.setattr(app_database, "DB_PATH", db_path)
+        app_database.init_db()
+
+        conn = app_database.get_connection()
+        conn.execute("INSERT INTO scrape_runs (run_id) VALUES ('run1')")
+        conn.close()
+
+        job = {
+            "job_id": "dupe123",
+            "title": "Engineer",
+            "company": "TechCorp",
+            "location": "NYC",
+            "linkedin_url": "https://linkedin.com/jobs/view/dupe123",
+            "apply_platform": "easy_apply",
+            "description_raw": "Job",
+            "role_type": "IC",
+        }
+
+        first = save_jobs("run1", [job])
+        assert first["saved"] == 1
+
+        # Simulate a second, concurrently-running scrape inserting the same
+        # job_id after this run's own dedup snapshot went stale.
+        second = save_jobs("run1", [job])
+        assert second["saved"] == 0
+
+        conn = app_database.get_connection()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE job_id = 'dupe123'").fetchone()[0]
+        conn.close()
+        assert count == 1

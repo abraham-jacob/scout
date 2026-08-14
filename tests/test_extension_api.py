@@ -2,6 +2,7 @@
 backend surface (searches, dedupe, ingest, status)."""
 
 import json
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,26 @@ from app.main import app, _run, _run_lock, _start_run_background
 def client():
     """FastAPI test client."""
     return TestClient(app)
+
+
+@pytest.fixture
+def temp_db():
+    """Point app.database.DB_PATH at a throwaway file so scrape_runs/jobs
+    rows inserted by a test never touch the real dev database.
+
+    Also creates the schema (init_db()) so routes that query scrape_runs/jobs
+    — e.g. _extension_searches_payload's elapsed_hours lookup — work against
+    an empty-but-real database, not one with no tables at all. Without this,
+    a fresh checkout with no data/scout.duckdb (a real prod DB is normally
+    created by app startup's init_db() call, which TestClient(app) doesn't
+    trigger) hits a CatalogException instead of a clean "no rows" result.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "scout.duckdb"
+        with patch("app.database.DB_PATH", db_path):
+            from app.database import init_db
+            init_db()
+            yield db_path
 
 
 def _make_proc(stdout_lines, stderr_lines=(), returncode=0):
@@ -41,7 +62,7 @@ def reset_run_state():
 class TestExtensionSearchesRoute:
     """Test GET /api/extension/searches."""
 
-    def test_returns_configured_searches(self, client):
+    def test_returns_configured_searches(self, client, temp_db):
         """Searches come straight from profiles/config.toml (STANDARD_TEST_CONFIG)."""
         response = client.get("/api/extension/searches")
 
@@ -49,10 +70,11 @@ class TestExtensionSearchesRoute:
         body = response.json()
         assert body["searches"] == [
             {"name": "Test Search",
-             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer"}
+             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer",
+             "elapsed_hours": None}
         ]
 
-    def test_includes_default_pacing_when_extension_section_absent(self, client):
+    def test_includes_default_pacing_when_extension_section_absent(self, client, temp_db):
         """[extension] is optional — defaults are served when the config omits it."""
         response = client.get("/api/extension/searches")
 
@@ -60,7 +82,7 @@ class TestExtensionSearchesRoute:
         assert body["min_delay_ms"] == 3000
         assert body["max_delay_ms"] == 8000
 
-    def test_honors_configured_pacing(self, client, monkeypatch):
+    def test_honors_configured_pacing(self, client, monkeypatch, temp_db):
         """A configured [extension] section overrides the defaults."""
         import app.config as app_config
         config_path = app_config.CONFIG_FILE
@@ -75,11 +97,48 @@ class TestExtensionSearchesRoute:
         assert body["min_delay_ms"] == 1000
         assert body["max_delay_ms"] == 2000
 
+    def test_elapsed_hours_reflects_last_run_that_saved_a_job(self, client, temp_db):
+        """A scrape_runs row with a matching job counts as a real last run."""
+        from datetime import datetime, timedelta
+        from app.database import get_connection
+
+        conn = get_connection()
+        run_at = datetime.now() - timedelta(hours=5)
+        conn.execute(
+            "INSERT INTO scrape_runs (run_id, search_name, run_at) VALUES (?, ?, ?)",
+            ["run-1", "Test Search", run_at],
+        )
+        conn.execute("INSERT INTO jobs (job_id, scrape_run_id) VALUES (?, ?)", ["job-1", "run-1"])
+        conn.close()
+
+        response = client.get("/api/extension/searches")
+
+        body = response.json()
+        assert body["searches"][0]["elapsed_hours"] == pytest.approx(5, abs=0.1)
+
+    def test_ignores_a_run_that_saved_no_jobs(self, client, temp_db):
+        """A scrape_runs row with zero jobs means the run failed/aborted — must not
+        count as a last run (elapsed_hours stays null, i.e. still shown as never run)."""
+        from datetime import datetime
+        from app.database import get_connection
+
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO scrape_runs (run_id, search_name, run_at) VALUES (?, ?, ?)",
+            ["run-1", "Test Search", datetime.now()],
+        )
+        conn.close()
+
+        response = client.get("/api/extension/searches")
+
+        body = response.json()
+        assert body["searches"][0]["elapsed_hours"] is None
+
 
 class TestExtensionReloadConfigRoute:
     """Test POST /api/extension/reload-config."""
 
-    def test_picks_up_a_changed_config_without_a_manual_cache_clear(self, client):
+    def test_picks_up_a_changed_config_without_a_manual_cache_clear(self, client, temp_db):
         """The route itself must bust load_config()'s lru_cache — a bare re-GET
         of /api/extension/searches would still return the stale cached list."""
         import app.config as app_config
@@ -88,7 +147,8 @@ class TestExtensionReloadConfigRoute:
         first = client.get("/api/extension/searches")
         assert first.json()["searches"] == [
             {"name": "Test Search",
-             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer"}
+             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer",
+             "elapsed_hours": None}
         ]
 
         # Edit the file on disk directly — deliberately not calling
@@ -106,10 +166,11 @@ class TestExtensionReloadConfigRoute:
         body = response.json()
         assert body["searches"] == [
             {"name": "Renamed Search",
-             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer"}
+             "url": "https://www.linkedin.com/jobs/search-results/?keywords=engineer",
+             "elapsed_hours": None}
         ]
 
-    def test_returns_pacing_alongside_searches(self, client):
+    def test_returns_pacing_alongside_searches(self, client, temp_db):
         """Response shape matches GET /api/extension/searches's."""
         response = client.post("/api/extension/reload-config")
 

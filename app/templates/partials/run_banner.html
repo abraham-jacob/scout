@@ -18,8 +18,12 @@
     <span>Scout is running — {{ nav.text }}</span>
   </div>
   {% elif run.error %}
-  <div class="bg-rose-50 dark:bg-rose-500/10 border-b border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-sm px-6 py-2">
-    Scout run failed: {{ run.error }}
+  <div class="bg-rose-50 dark:bg-rose-500/10 border-b border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-sm px-6 py-2 flex items-center justify-between gap-2">
+    <span>Scout run failed: {{ run.error }}</span>
+    <button type="button" hx-post="/scout/dismiss" hx-target="#run-banner" hx-swap="outerHTML"
+            class="shrink-0 text-rose-700 dark:text-rose-300 hover:text-rose-900 dark:hover:text-rose-100 underline">
+      Dismiss
+    </button>
   </div>
   {% endif %}
 </div>
