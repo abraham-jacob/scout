@@ -43,6 +43,10 @@ single source of truth for the project's version number.
   repo (pytest invocations, per-module function inventories); moved the
   Documentation site section to `docs/CLAUDE.md`, lazy-loaded only when
   working under `docs/`.
+- Upgraded `yasbd-lib` (the sentence-boundary detector behind Pass 2's
+  description cleaning) from 0.16 to 1.0 (`~=1.0`, currently 1.0.2). No
+  change to how job descriptions are split; it drops two transitive
+  dependencies (`loguru`, `ftfy`) and detects boundaries faster.
 
 ## [0.1.0] - 2026-08-01
 
