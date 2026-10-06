@@ -30,6 +30,12 @@ single source of truth for the project's version number.
   `release_notes.md` (which lives at the repo root, outside `docs/`),
   failing `mkdocs build --strict` and leaving the live site stale on every
   Pages deploy. The link is now absolute.
+- The `[llm] backend = "api"` startup check refused to run when `[llm.api]
+  model` wasn't listed by the endpoint's `/models`, which blocked endpoints
+  that serve a fixed subscription set without advertising those ids. A
+  missing id now warns instead of aborting; the endpoint still must be
+  reachable and OpenAI-compatible, and the warm-up's real inference call
+  still hard-fails a genuinely wrong model id before Pass 1.
 
 ### Changed
 
