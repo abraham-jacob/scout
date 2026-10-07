@@ -47,6 +47,10 @@ single source of truth for the project's version number.
   description cleaning) from 0.16 to 1.0 (`~=1.0`, currently 1.0.2). No
   change to how job descriptions are split; it drops two transitive
   dependencies (`loguru`, `ftfy`) and detects boundaries faster.
+- The web UI's filter bar now stays pinned under the header while scrolling
+  the job list, so filters can be changed without scrolling back to the
+  top. It gets the header's frosted background so cards scrolling beneath
+  it don't show through.
 
 ## [0.1.0] - 2026-08-01
 
