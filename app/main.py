@@ -320,6 +320,8 @@ PIPELINE_STATUSES = (
     "interviewing_technical",
     "offer",
     "rejected",
+    "no_response",
+    "posting_closed",
 )
 
 
@@ -335,9 +337,10 @@ def _fetch_jobs(
 ) -> list[dict]:
     """Query jobs from DuckDB with optional filters and sort order.
 
-    status may be a single job status, "pipeline" (applied + all interview/
-    offer/rejected stages), or "all". Dismissed jobs are hidden from the
-    "all" view unless show_dismissed is set; other filters always win.
+    status may be a single job status, "pipeline" (applied + every
+    post-application stage in PIPELINE_STATUSES), or "all". Dismissed jobs
+    are hidden from the "all" view unless show_dismissed is set; other
+    filters always win.
     company is a case-insensitive substring match; the UI only sends it for
     3+ typed characters or an autocomplete pick. min_score filters to
     match_score >= min_score when > 0 (or < min_score when invert is set),

@@ -19,6 +19,11 @@ single source of truth for the project's version number.
 - **Favicon** for the web UI.
 - **Dismiss button** on the web UI's run-failure banner — previously
   nothing cleared it short of starting a new run.
+- **Two new job statuses** for applications that went nowhere without a
+  formal rejection: **No Response** (you applied and never heard back) and
+  **Posting Closed** (LinkedIn stopped accepting applications). Both are in
+  each card's status dropdown and the filter bar's Applied ▾ menu, and are
+  included in "Applied · All".
 
 ### Fixed
 

@@ -157,10 +157,10 @@ class TestFetchJobs:
 
         call_sql = mock_conn.execute.call_args[0][0]
         call_params = mock_conn.execute.call_args[0][1]
-        assert "j.status IN (?, ?, ?, ?, ?)" in call_sql
+        assert "j.status IN (?, ?, ?, ?, ?, ?, ?)" in call_sql
         assert call_params == [
             "applied", "interviewing_recruiter", "interviewing_technical",
-            "offer", "rejected",
+            "offer", "rejected", "no_response", "posting_closed",
         ]
 
     @patch('app.main.get_connection')
