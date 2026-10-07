@@ -137,6 +137,8 @@
               <button data-stage="interviewing_technical" onclick="setAppliedStage('interviewing_technical')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Technical</button>
               <button data-stage="offer" onclick="setAppliedStage('offer')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Offer</button>
               <button data-stage="rejected" onclick="setAppliedStage('rejected')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Rejected</button>
+              <button data-stage="no_response" onclick="setAppliedStage('no_response')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">No response</button>
+              <button data-stage="posting_closed" onclick="setAppliedStage('posting_closed')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Posting closed</button>
             </div>
           </div>
         </div>
@@ -295,6 +297,8 @@
       interviewing_technical: 'Applied · Technical',
       offer: 'Applied · Offer',
       rejected: 'Applied · Rejected',
+      no_response: 'Applied · No response',
+      posting_closed: 'Applied · Posting closed',
     };
 
     function toggleStageMenu(e) {
