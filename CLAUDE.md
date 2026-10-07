@@ -315,6 +315,11 @@ reverse — this is what keeps the import graph acyclic).
 
 ## Conventions
 
+- **Never delete anything in `data/`.** This holds the live DuckDB database
+  (`data/scout.duckdb`) — the user's only copy of scraped/enriched job data.
+  Don't `rm`, overwrite, or reset files there (including as a side effect of
+  a CI repro, a "clean slate" test setup, or a git clean/checkout) without
+  asking first, even in auto mode.
 - **Never work on `main` or a `release/x.y.z` branch directly.** Scout uses a
   release-branch workflow, not plain trunk-based development:
   `release/x.y.z` (not `main`) is the **default branch** and where
