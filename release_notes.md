@@ -41,6 +41,12 @@ single source of truth for the project's version number.
   missing id now warns instead of aborting; the endpoint still must be
   reachable and OpenAI-compatible, and the warm-up's real inference call
   still hard-fails a genuinely wrong model id before Pass 1.
+- Pass 2's description cleaning glued real sentence ends after "U.S.",
+  "U.K." and "etc." into one unit (e.g. "...work in the U.S. Sponsorship is
+  not available."), because Scout over-protected 19 abbreviations that
+  yasbd-lib now handles itself. The protection is trimmed to "Ph.D." only,
+  which Scout's own run-together-sentence repair would otherwise split
+  mid-word ([#30](https://github.com/abraham-jacob/scout/issues/30)).
 
 ### Changed
 
