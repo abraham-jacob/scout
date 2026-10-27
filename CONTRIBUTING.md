@@ -203,9 +203,12 @@ a normal release, it also has to be merged into the *current* release
 branch so that branch doesn't silently regress the fix once it eventually
 merges into `main` itself.
 
-`hotfix/*` branches are covered by their own repo-wide ruleset (PR required,
-`test` status check required, no force-push/deletion), the same protection
-`release/*` branches get.
+`hotfix/*` branches are deliberately **unprotected**: a hotfix branch is a
+working branch you commit and push to directly (steps 1–2) and delete when
+done (step 7), like a feature branch, not an integration branch like
+`release/*`. The gates are on its two merge targets instead: `main`'s
+branch protection and the `release/*` ruleset both require a PR and a
+passing `test` check. CI still runs on every push to a `hotfix/*` branch.
 
 1. Branch from `main`, not the current release branch:
    ```bash

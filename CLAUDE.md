@@ -332,10 +332,12 @@ reverse — this is what keeps the import graph acyclic).
   active release branch too (see `CONTRIBUTING.md`'s "Hotfixes" section —
   skipping that merge-back is the easy mistake, since it silently vanishes
   once the release branch eventually merges into `main`). Both `main` and
-  every `release/*`/`hotfix/*` branch are protected on GitHub (PR required,
-  force-push and deletion blocked) — `release/*`/`hotfix/*` via a repo-wide
-  ruleset so new branches are covered automatically, not a redone per-branch
-  setting. Versioning (`x.y.z` semver) and the full release-cut checklist
+  every `release/*` branch are protected on GitHub (PR required, `test`
+  check required, force-push and deletion blocked) — `release/*` via a
+  repo-wide ruleset so new branches are covered automatically, not a redone
+  per-branch setting. `hotfix/*` is deliberately unprotected: it's a working
+  branch pushed to directly, gated by its PR targets' protection (an earlier
+  `hotfix/**` ruleset made the branch impossible to push). Versioning (`x.y.z` semver) and the full release-cut checklist
   live in `CONTRIBUTING.md`'s "Releasing"/"Hotfixes" sections and
   `release_notes.md` at the repo root; `extension/manifest.json`'s
   `"version"` is the single source of truth for the project's version number.
