@@ -345,8 +345,8 @@ reverse — this is what keeps the import graph acyclic).
   even mid-release-cut, and even once the human has approved the overall
   release plan — plan approval is not merge approval. Open the PR (`gh pr
   create`) and stop; the human reviews and merges it themselves. Steps that
-  come after a merge (tagging, `gh release create`, deleting the spent
-  branch) block on that human action.
+  come after a merge (tagging, `gh release create`, cutting the next
+  release branch) block on that human action.
 - **Every PR that adds a feature or fixes a bug updates
   [`release_notes.md`](release_notes.md).** Add/append to the current
   in-progress `## [Unreleased] - x.y.z` section (create it if this is the
