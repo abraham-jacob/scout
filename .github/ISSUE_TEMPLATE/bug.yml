@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in Scout isn't working as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Redact personal data before pasting: resume content, real job
+        listings, API keys, and LinkedIn session details never belong here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, including exact error text if there was any.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run saved search "..." from the extension popup
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: LLM backend (`[llm] backend`)
+      options:
+        - claude
+        - api
+        - Not relevant
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: From the daily app log under `[logging] dir`, the popup's Run Log, or the browser console.
+      render: text
