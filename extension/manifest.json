@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Scout",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "LinkedIn job scraper for Scout — pairs with the local Scout web app.",
   "permissions": ["storage", "tabs"],
   "host_permissions": [

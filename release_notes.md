@@ -8,7 +8,7 @@ to depend on, so a version bump communicates *how much changed*, not a
 compatibility contract. `extension/manifest.json`'s `version` field is the
 single source of truth for the project's version number.
 
-## [Unreleased] - 0.2.0
+## [0.2.0] - 2026-10-27
 
 ### Added
 
@@ -62,6 +62,8 @@ single source of truth for the project's version number.
   the job list, so filters can be changed without scrolling back to the
   top. It gets the header's frosted background so cards scrolling beneath
   it don't show through.
+- The Pipfile no longer pins an exact Python patch release (3.12.3); any
+  Python 3.12.x can now install and run Scout.
 
 ## [0.1.0] - 2026-08-01
 
