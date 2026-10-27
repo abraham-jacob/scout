@@ -26,9 +26,8 @@ PRs into it throughout the cycle. `main` only moves once, at the very end of
 a cycle, when the finished `release/x.y.z` branch is merged in and tagged
 (see "Releasing" below). Both `main` and every `release/*` branch are
 protected: a pull request is required to merge, force-pushes are blocked,
-and neither can be deleted directly (a spent release branch is deleted
-explicitly as the last step of the Releasing checklist, not by a stray
-force-push or admin override). The one exception to "work lands on
+and neither can be deleted — spent release branches are kept after their
+release ships, not cleaned up. The one exception to "work lands on
 `release/x.y.z`, not `main`" is a **hotfix** — an urgent fix to
 already-shipped code that can't wait for the current release cycle to
 finish, which branches from and merges directly to `main`; see "Hotfixes"
@@ -178,12 +177,7 @@ just bumping a number:
    then paste the new `release_notes.md` section's body on stdin (Ctrl-D to
    finish) — or open `gh release create vx.y.z` without `--notes-file` for
    an interactive editor instead.
-5. Delete the spent `release/x.y.z` branch — it's fully merged into `main`
-   at this point, so nothing is lost:
-   ```bash
-   git push origin --delete release/x.y.z
-   ```
-6. Cut the next cycle's release branch from `main` and make it the new
+5. Cut the next cycle's release branch from `main` and make it the new
    default branch:
    ```bash
    git checkout main && git checkout -b release/x.y+1.0
@@ -193,7 +187,8 @@ just bumping a number:
    `release/*` branches are covered by a repo-wide ruleset, so the new
    branch is automatically protected (PR required, `test` status check
    required, no force-push/deletion) — no per-branch protection setup
-   needed.
+   needed. Leave the spent `release/x.y.z` branch in place; spent release
+   branches are kept, not deleted (the ruleset blocks deletion anyway).
 
 Steps 2 onward always happen after the release branch's work is done and
 its PR has merged — never tag a branch mid-review.
@@ -208,9 +203,12 @@ a normal release, it also has to be merged into the *current* release
 branch so that branch doesn't silently regress the fix once it eventually
 merges into `main` itself.
 
-`hotfix/*` branches are covered by their own repo-wide ruleset (PR required,
-`test` status check required, no force-push/deletion), the same protection
-`release/*` branches get.
+`hotfix/*` branches are deliberately **unprotected**: a hotfix branch is a
+working branch you commit and push to directly (steps 1–2) and delete when
+done (step 7), like a feature branch, not an integration branch like
+`release/*`. The gates are on its two merge targets instead: `main`'s
+branch protection and the `release/*` ruleset both require a PR and a
+passing `test` check. CI still runs on every push to a `hotfix/*` branch.
 
 1. Branch from `main`, not the current release branch:
    ```bash

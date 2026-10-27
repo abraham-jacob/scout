@@ -332,10 +332,12 @@ reverse — this is what keeps the import graph acyclic).
   active release branch too (see `CONTRIBUTING.md`'s "Hotfixes" section —
   skipping that merge-back is the easy mistake, since it silently vanishes
   once the release branch eventually merges into `main`). Both `main` and
-  every `release/*`/`hotfix/*` branch are protected on GitHub (PR required,
-  force-push and deletion blocked) — `release/*`/`hotfix/*` via a repo-wide
-  ruleset so new branches are covered automatically, not a redone per-branch
-  setting. Versioning (`x.y.z` semver) and the full release-cut checklist
+  every `release/*` branch are protected on GitHub (PR required, `test`
+  check required, force-push and deletion blocked) — `release/*` via a
+  repo-wide ruleset so new branches are covered automatically, not a redone
+  per-branch setting. `hotfix/*` is deliberately unprotected: it's a working
+  branch pushed to directly, gated by its PR targets' protection (an earlier
+  `hotfix/**` ruleset made the branch impossible to push). Versioning (`x.y.z` semver) and the full release-cut checklist
   live in `CONTRIBUTING.md`'s "Releasing"/"Hotfixes" sections and
   `release_notes.md` at the repo root; `extension/manifest.json`'s
   `"version"` is the single source of truth for the project's version number.
@@ -343,8 +345,8 @@ reverse — this is what keeps the import graph acyclic).
   even mid-release-cut, and even once the human has approved the overall
   release plan — plan approval is not merge approval. Open the PR (`gh pr
   create`) and stop; the human reviews and merges it themselves. Steps that
-  come after a merge (tagging, `gh release create`, deleting the spent
-  branch) block on that human action.
+  come after a merge (tagging, `gh release create`, cutting the next
+  release branch) block on that human action.
 - **Every PR that adds a feature or fixes a bug updates
   [`release_notes.md`](release_notes.md).** Add/append to the current
   in-progress `## [Unreleased] - x.y.z` section (create it if this is the
