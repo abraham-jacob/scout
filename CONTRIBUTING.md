@@ -10,9 +10,9 @@ doesn't have to reverse-engineer them from the diff history.
 - Read the [README](https://github.com/abraham-jacob/scout/blob/main/README.md)
   first — architecture, setup, and the three-pass pipeline design are covered
   there.
-- For anything non-trivial (a new feature, a behavior change, a new
-  dependency), open an issue or start a discussion before writing code. It's a
-  much cheaper conversation before the PR than after.
+- **Work starts from a GitHub issue.** Every bug fix and enhancement is
+  documented as an issue first, then picked up from there (see "Workflow"
+  below). It's a much cheaper conversation before the PR than after.
 - Scout automates browsing *your own* LinkedIn account via *your own* logged-in
   Chrome session. Keep that principle in any change you propose — nothing that
   turns this into a scraping/crawling tool at scale.
@@ -39,22 +39,32 @@ runs the test suite via
 — that's the "Tests" and "Coverage" badges at the top of the README. A PR
 with a failing run is visible immediately in the PR's checks tab.
 
-1. **Branch from the current release branch**, not `main` — check
+1. **Start from an issue.** Every bug fix and enhancement begins as a
+   [GitHub issue](https://github.com/abraham-jacob/scout/issues) (see
+   "Reporting bugs / requesting features" below), labeled and, once it's
+   planned for a release, assigned to that release's milestone (e.g.
+   `0.3.0`). Work is picked up from the issue list, not started ad hoc.
+   Very minor changes can skip this step: typo fixes, one-line tweaks,
+   test-only changes, CI config.
+2. **Branch from the current release branch**, not `main` — check
    `git branch --show-current` on a fresh clone/pull to confirm which
-   `release/x.y.z` is currently checked out as default.
+   `release/x.y.z` is currently checked out as default. Put the issue
+   number in the branch name:
    ```bash
    git checkout release/x.y.z && git pull
-   git checkout -b your-feature-name
+   git checkout -b feature/<issue>-short-name   # or fix/<issue>-short-name
    ```
-2. **Make focused commits.** Prefer several small, well-scoped commits over one
+3. **Make focused commits.** Prefer several small, well-scoped commits over one
    giant one — it makes review (and future `git blame`) much easier.
-3. **Run the test suite locally before opening a PR** (see below) — don't
+4. **Run the test suite locally before opening a PR** (see below) — don't
    rely on CI to catch something you could've caught in ten seconds.
-4. **Open a PR against the current `release/x.y.z` branch**, not `main`.
+5. **Open a PR against the current `release/x.y.z` branch**, not `main`.
    Describe *why* the change is needed, not just what changed — the diff
-   already shows the what.
-5. **Keep the PR focused.** One logical change per PR. If you notice something
-   unrelated that needs fixing, file it separately.
+   already shows the what. Put `Closes #<issue>` in the description so the
+   issue closes automatically when the PR merges, and link the issue from
+   the change's `release_notes.md` entry.
+6. **Keep the PR focused.** One logical change per PR. If you notice something
+   unrelated that needs fixing, open an issue for it instead.
 
 ## Environment setup
 
@@ -155,13 +165,17 @@ work accumulates on `release/x.y.z` throughout a cycle (see "Workflow"
 above), cutting a release means merging that whole branch into `main`, not
 just bumping a number:
 
-1. On the `release/x.y.z` branch: finalize
+1. Check the `x.y.z` [milestone](https://github.com/abraham-jacob/scout/milestones):
+   it should have no open issues. Move anything unfinished to the next
+   release's milestone (create it if needed) rather than holding the cut.
+   Then, on the `release/x.y.z` branch, finalize
    [`release_notes.md`](https://github.com/abraham-jacob/scout/blob/main/release_notes.md).
    Feature/bugfix PRs accumulate entries under `## [Unreleased] - x.y.z`
    throughout the cycle (see `CLAUDE.md`), so this step is a review pass,
    not a from-scratch write: rename that heading to `## [x.y.z] -
    YYYY-MM-DD`, fill any gaps, and bump `extension/manifest.json`'s
-   `"version"` to match. Commit.
+   `"version"` to match. Every issue closed in the milestone should have a
+   matching entry. Commit.
 2. Open a PR from `release/x.y.z` into `main` (title: `Release vx.y.z`) and
    merge it once CI is green.
 3. Tag the resulting commit on `main`:
@@ -240,12 +254,23 @@ passing `test` check. CI still runs on every push to a `hotfix/*` branch.
 
 ## Reporting bugs / requesting features
 
-Open a [GitHub issue](https://github.com/abraham-jacob/scout/issues). For
-bugs, include: what you expected, what happened instead, and enough
-reproduction context to act on (config shape, which backend — Claude or
-API — you're running, relevant log lines). Personal data (resume
-content, actual job listings, API keys) never belongs in an issue — redact
-before pasting.
+Open a [GitHub issue](https://github.com/abraham-jacob/scout/issues/new/choose)
+using the **Bug report** or **Enhancement** form; a blank issue is fine for
+anything that fits neither. For bugs, include: what you expected, what
+happened instead, and enough reproduction context to act on (config shape,
+which backend — Claude or API — you're running, relevant log lines).
+Personal data (resume content, actual job listings, API keys) never belongs
+in an issue — redact before pasting.
+
+Labels:
+
+- **Type** (one per issue): `bug`, `enhancement`, or `documentation`. The
+  forms apply `bug`/`enhancement` automatically. Add `qol` for
+  quality-of-life improvements.
+- **Area** (one or more): `area: extension`, `area: web-ui`,
+  `area: pipeline`, `area: docs`.
+- **Milestone**: the release the issue is planned for. An issue with no
+  milestone is in the backlog.
 
 ## License
 

@@ -347,6 +347,20 @@ reverse — this is what keeps the import graph acyclic).
   create`) and stop; the human reviews and merges it themselves. Steps that
   come after a merge (tagging, `gh release create`, cutting the next
   release branch) block on that human action.
+- **Work starts from a GitHub issue.** Every bug fix and enhancement is
+  documented as an issue before any code is written: use the Bug report or
+  Enhancement form (`.github/ISSUE_TEMPLATE/`), label it with a type
+  (`bug`/`enhancement`/`documentation`, plus `qol` where it fits) and one or
+  more areas (`area: extension`/`area: web-ui`/`area: pipeline`/`area: docs`),
+  and assign the current release's milestone when it's planned for that
+  release. When the user describes a new bug or idea, open the issue first
+  and confirm it before starting work; pick work up from the issue list.
+  Name the branch after the issue (`feature/<n>-short-name`,
+  `fix/<n>-short-name`), put `Closes #<n>` in the PR description, and link
+  the issue from the `release_notes.md` entry. Very minor changes can skip
+  the issue (typo fixes, one-line tweaks, test-only changes, CI config).
+  See `CONTRIBUTING.md`'s "Workflow" and "Reporting bugs / requesting
+  features" sections.
 - **Every PR that adds a feature or fixes a bug updates
   [`release_notes.md`](release_notes.md).** Add/append to the current
   in-progress `## [Unreleased] - x.y.z` section (create it if this is the

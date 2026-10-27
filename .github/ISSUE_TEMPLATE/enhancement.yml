@@ -1,0 +1,28 @@
+name: Enhancement
+description: A new feature, quality-of-life improvement, or behavior change.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What's awkward, slow, or missing today, and when you run into it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What it should do instead. Rough is fine; the details get worked out on the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: ui
+    attributes:
+      label: UI
+      options:
+        - label: This changes the web UI or extension popup, so it needs an approved mockup under `mockups/` before implementation (see CLAUDE.md).
