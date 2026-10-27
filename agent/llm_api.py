@@ -175,11 +175,17 @@ def _verify_api_llm(config) -> None:
     """Verify the configured API endpoint is reachable and serving the model.
 
     Probes the OpenAI-compatible /models endpoint with a short timeout and
-    raises SetupError if the endpoint can't be reached (wrong host / down), if the
-    response isn't an OpenAI-compatible model list, or if the list doesn't
-    include [llm.api] model — so a misconfigured backend fails at startup,
-    before Pass 1, instead of failing every clean/enrich call mid-run. Only
-    called when the [llm] backend is "api".
+    raises SetupError if the endpoint can't be reached (wrong host / down) or if
+    the response isn't an OpenAI-compatible model list — so a misconfigured
+    backend fails at startup, before Pass 1, instead of failing every
+    clean/enrich call mid-run.
+
+    A model id missing from that list only warns. Endpoints that serve a fixed
+    subscription set commonly don't advertise those models in /models, so
+    absence is not evidence the model is unavailable. The authoritative check is
+    the warm-up that follows in runner.py: _warm_api_llm and _warm_up_clean_pass
+    both run real inference against the configured model, so a genuinely wrong
+    id still hard-fails before Pass 1. Only called when [llm] backend is "api".
     """
     url, headers = _api_endpoint(config, "/models")
     try:
@@ -203,14 +209,14 @@ def _verify_api_llm(config) -> None:
         )
     if config.api_model not in available:
         listed = ", ".join(sorted(available)) or "none"
-        raise SetupError(
-            f"Setup error: API endpoint at {config.api_base_url} does not "
-            f"serve a model with the exact id {config.api_model!r} (it serves: "
-            f"{listed}). [llm.api] model must match one of those ids exactly, "
-            'including any tag — e.g. "scout-enrich:latest", not "scout-enrich". '
-            "Copy the id from your server's model list (for Ollama, `ollama "
-            f"list`), or pull it if it's missing (e.g. `ollama pull "
-            f"{config.api_model}`)."
+        emit_log(
+            f"[llm.api] model {config.api_model!r} is not in the list served by "
+            f"{config.api_base_url} (it lists: {listed}). Continuing — some "
+            "endpoints don't advertise every model they serve. If this is a "
+            "typo the warm-up will fail next: ids must match exactly, including "
+            'any tag — e.g. "scout-enrich:latest", not "scout-enrich" (for '
+            "Ollama, copy it from `ollama list`).",
+            level="warn",
         )
 
 

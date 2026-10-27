@@ -11,6 +11,8 @@ JOB_STATUSES = [
     "interviewing_technical",
     "offer",
     "rejected",
+    "no_response",
+    "posting_closed",
     "dismissed",
 ]
 

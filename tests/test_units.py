@@ -1,5 +1,7 @@
 """Tests for agent/units.py — sentence/bullet unit splitting and stitching."""
 
+import pytest
+
 from agent.units import (
     Unit,
     parse_drop_response,
@@ -87,14 +89,68 @@ class TestSplitIntoUnits:
         assert units[0].text == "Benefits"
 
     def test_common_abbreviations_do_not_create_false_sentence_boundaries(self):
-        """"U.S." and friends don't get mistaken for a sentence end.
+        """"U.S." before a lowercase word isn't mistaken for a sentence end.
 
-        Confirmed directly against production data: yasbd otherwise splits
-        "outside the U.S. receive" into two sentences at the abbreviation,
-        occasionally leaving a stray one-word "U.S." unit behind once its
-        neighbors are dropped.
+        yasbd handles this case natively; kept as a baseline so a future
+        yasbd upgrade that regresses it is caught here.
         """
         text = "Full-time employees outside the U.S. receive full benefits."
+        units = split_into_units(text)
+        assert len(units) == 1
+        assert units[0].text == text
+
+    @pytest.mark.parametrize("text", [
+        "This role requires U.S. Government security clearance.",
+        "This job is open to U.S. Persons only per export law.",
+        "The contract applies to U.K. Commons members.",
+        "Acme Inc. USA is expanding its engineering team this quarter.",
+        "Beta Corp. North America leads this hiring initiative.",
+        "Martin Luther King Jr. Day is a paid holiday at this company.",
+        "John Doe Sr. VP of Engineering will be your hiring manager.",
+        "Dr. Smith Jr. met Sr. Consultant Davis at Acme Inc. yesterday.",
+    ])
+    def test_abbreviation_before_proper_noun_is_not_split(self, text):
+        """An abbreviation followed by a genuine proper noun stays one sentence.
+
+        Real job-posting phrasing from issue #30, fixed upstream in yasbd
+        0.15.0/0.15.1 — these pass with no Scout-side protection for
+        U.S./U.K./Inc./Corp./Jr./Sr., so a yasbd regression shows up here.
+        """
+        units = split_into_units(text)
+        assert len(units) == 1
+        assert units[0].text == text
+
+    @pytest.mark.parametrize("text, first", [
+        ("Must be eligible to work in the U.S. Sponsorship is not available.",
+         "Must be eligible to work in the U.S."),
+        ("Based in the U.K. Remote work is allowed.", "Based in the U.K."),
+        ("This policy was adopted in the U.S. Next week we will review it.",
+         "This policy was adopted in the U.S."),
+        ("Experience with Python, Go, Rust, etc. We offer competitive pay.",
+         "Experience with Python, Go, Rust, etc."),
+    ])
+    def test_real_sentence_end_after_abbreviation_still_splits(self, text, first):
+        """A genuine sentence end after U.S./U.K./etc. is still a boundary.
+
+        Why those three aren't in _ABBREVIATIONS (issue #30): protecting them
+        would merge these common real boundaries into one unit.
+        """
+        units = split_into_units(text)
+        assert len(units) == 2
+        assert units[0].text == first
+
+    @pytest.mark.parametrize("text", [
+        "Requires a Ph.D. in statistics.",
+        "Ph.D. candidates are encouraged to apply.",
+        "We support Ph.D. Candidates and interns.",
+    ])
+    def test_phd_is_not_split_mid_word(self, text):
+        """"Ph.D." survives _deconcatenate intact, wherever it appears.
+
+        Regression guard for issue #30: _DECONCAT_RE reads the "h.D" inside
+        "Ph.D." as two run-together sentences, so without the abbreviation
+        protection it splits into "Ph." / "D. ..." in every position.
+        """
         units = split_into_units(text)
         assert len(units) == 1
         assert units[0].text == text

@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scout</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="alternate icon" type="image/png" href="/static/favicon-32.png" />
 
   <!-- Apply saved theme before first paint to avoid a flash of the wrong theme -->
   <script>
@@ -101,7 +103,7 @@
   <div id="run-banner" hx-get="/scout/status" hx-trigger="load" hx-swap="outerHTML"></div>
 
   <!-- ================= Filter bar ================= -->
-  <div class="bg-white/60 dark:bg-ink/60 border-b border-stone-200 dark:border-edge/60">
+  <div class="sticky top-[72px] z-[9] bg-white/85 dark:bg-ink/85 backdrop-blur border-b border-stone-200 dark:border-edge/60">
     <div class="max-w-6xl mx-auto px-6 py-3 flex flex-wrap items-center gap-5">
 
       <!-- Role type filter -->
@@ -135,6 +137,8 @@
               <button data-stage="interviewing_technical" onclick="setAppliedStage('interviewing_technical')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Technical</button>
               <button data-stage="offer" onclick="setAppliedStage('offer')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Offer</button>
               <button data-stage="rejected" onclick="setAppliedStage('rejected')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Rejected</button>
+              <button data-stage="no_response" onclick="setAppliedStage('no_response')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">No response</button>
+              <button data-stage="posting_closed" onclick="setAppliedStage('posting_closed')" class="stage-item w-full text-left px-3.5 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-stone-50 dark:hover:bg-white/5 transition-colors">Posting closed</button>
             </div>
           </div>
         </div>
@@ -293,6 +297,8 @@
       interviewing_technical: 'Applied · Technical',
       offer: 'Applied · Offer',
       rejected: 'Applied · Rejected',
+      no_response: 'Applied · No response',
+      posting_closed: 'Applied · Posting closed',
     };
 
     function toggleStageMenu(e) {

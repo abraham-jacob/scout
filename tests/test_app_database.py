@@ -243,3 +243,32 @@ class TestConstants:
         assert "rejected" in JOB_STATUSES
         assert "dismissed" in JOB_STATUSES
         assert len(JOB_STATUSES) >= 5
+
+    def test_closed_out_statuses_follow_rejected(self):
+        """No-response and posting-closed sit after rejected, before dismissed.
+
+        JOB_STATUSES' order is the card dropdown's order, so the two
+        "went nowhere" outcomes stay grouped with the other terminal stage.
+        """
+        i = JOB_STATUSES.index
+        assert i("rejected") < i("no_response") < i("posting_closed") < i("dismissed")
+
+    def test_every_status_is_styled_and_filterable(self):
+        """Each status has card colors and every pipeline stage a filter entry.
+
+        job_card.html falls back to dismissed's grey for an unknown status
+        and the Applied ▾ menu is hand-written, so a status added to the
+        Python lists alone would render wrong or be unfilterable silently.
+        """
+        from app.main import PIPELINE_STATUSES
+
+        templates = Path(__file__).parent.parent / "app" / "templates"
+        card = (templates / "partials" / "job_card.html").read_text()
+        index = (templates / "index.html").read_text()
+        for status in JOB_STATUSES:
+            # one entry each in status_accent, status_badge and status_dot
+            assert card.count(f"'{status}':") == 3, status
+        assert set(PIPELINE_STATUSES) <= set(JOB_STATUSES)
+        for status in PIPELINE_STATUSES:
+            assert f'data-stage="{status}"' in index, status
+            assert f"{status}: 'Applied · " in index, status

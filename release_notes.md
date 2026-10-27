@@ -8,6 +8,63 @@ to depend on, so a version bump communicates *how much changed*, not a
 compatibility contract. `extension/manifest.json`'s `version` field is the
 single source of truth for the project's version number.
 
+## [0.2.0] - 2026-10-27
+
+### Added
+
+- **Search last-run pill** in the extension popup: each saved search shows
+  an elapsed-time-since-last-run pill (green → red buckets as it goes
+  stale), refreshed after every run, so it's obvious at a glance which
+  searches need re-running.
+- **Favicon** for the web UI.
+- **Dismiss button** on the web UI's run-failure banner — previously
+  nothing cleared it short of starting a new run.
+- **Two new job statuses** for applications that went nowhere without a
+  formal rejection: **No Response** (you applied and never heard back) and
+  **Posting Closed** (LinkedIn stopped accepting applications). Both are in
+  each card's status dropdown and the filter bar's Applied ▾ menu, and are
+  included in "Applied · All".
+
+### Fixed
+
+- `save_jobs()` could crash the whole pipeline on a `job_id` insert race
+  between overlapping runs; it now uses `ON CONFLICT DO NOTHING` so a
+  collision is skipped instead of fatal.
+- The docs deploy was broken since `docs/contributing.md`'s snippet-include
+  of `CONTRIBUTING.md` couldn't resolve the relative link to
+  `release_notes.md` (which lives at the repo root, outside `docs/`),
+  failing `mkdocs build --strict` and leaving the live site stale on every
+  Pages deploy. The link is now absolute.
+- The `[llm] backend = "api"` startup check refused to run when `[llm.api]
+  model` wasn't listed by the endpoint's `/models`, which blocked endpoints
+  that serve a fixed subscription set without advertising those ids. A
+  missing id now warns instead of aborting; the endpoint still must be
+  reachable and OpenAI-compatible, and the warm-up's real inference call
+  still hard-fails a genuinely wrong model id before Pass 1.
+- Pass 2's description cleaning glued real sentence ends after "U.S.",
+  "U.K." and "etc." into one unit (e.g. "...work in the U.S. Sponsorship is
+  not available."), because Scout over-protected 19 abbreviations that
+  yasbd-lib now handles itself. The protection is trimmed to "Ph.D." only,
+  which Scout's own run-together-sentence repair would otherwise split
+  mid-word ([#30](https://github.com/abraham-jacob/scout/issues/30)).
+
+### Changed
+
+- Trimmed `CLAUDE.md` of content a session can reconstruct by reading the
+  repo (pytest invocations, per-module function inventories); moved the
+  Documentation site section to `docs/CLAUDE.md`, lazy-loaded only when
+  working under `docs/`.
+- Upgraded `yasbd-lib` (the sentence-boundary detector behind Pass 2's
+  description cleaning) from 0.16 to 1.0 (`~=1.0`, currently 1.0.2). No
+  change to how job descriptions are split; it drops two transitive
+  dependencies (`loguru`, `ftfy`) and detects boundaries faster.
+- The web UI's filter bar now stays pinned under the header while scrolling
+  the job list, so filters can be changed without scrolling back to the
+  top. It gets the header's frosted background so cards scrolling beneath
+  it don't show through.
+- The Pipfile no longer pins an exact Python patch release (3.12.3); any
+  Python 3.12.x can now install and run Scout.
+
 ## [0.1.0] - 2026-08-01
 
 ### Added

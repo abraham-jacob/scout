@@ -75,7 +75,7 @@ The extension's popup streams Pass 1 live as it happens — which job it's fetch
 ## ✨ Features
 
 ### 🔍 Easily sort and filter
-Filter by role type, application status (including the full interview pipeline — Recruiter → Technical → Offer/Rejected), unseen-only, or company name with autocomplete search. Sort by newest or best match.
+Filter by role type, application status (including the full interview pipeline — Recruiter → Technical → Offer/Rejected, plus No Response and Posting Closed for applications that went silent), unseen-only, or company name with autocomplete search. Sort by newest or best match.
 
 <img src="docs/images/feature_sort_filter.png" alt="Filter bar: role, status, sort, unseen-only, and company search" width="100%">
 
@@ -100,7 +100,7 @@ Every job is scored 0–100 against your resume, an optional per-role profile, a
 <img src="docs/images/feature_job_match_score.png" alt="A job title with its computed match-score badge" width="100%">
 
 ### 📌 Application pipeline tracking
-Move a job through New → Saved → Applied → Interviewing (Recruiter/Technical) → Offer/Rejected right from its card. The status filter understands the whole pipeline, not just exact matches.
+Move a job through New → Saved → Applied → Interviewing (Recruiter/Technical) → Offer/Rejected right from its card — or mark it No Response (you never heard back) or Posting Closed (LinkedIn stopped accepting applications, no formal rejection). The status filter understands the whole pipeline, not just exact matches.
 
 <img src="docs/images/feature_track_jobs.png" alt="The status dropdown showing every pipeline stage from New to Dismissed" width="100%">
 

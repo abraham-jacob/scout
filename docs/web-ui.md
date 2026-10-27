@@ -167,7 +167,9 @@ fastest path to apply — whether that's the company's own site or Easy Apply.
 **Pipeline Tracking**  
 Never lose track of where you stand. The status dropdown lets you move the
 job through the entire interview pipeline (New → Applied → Interviewing →
-Offer) right from its card.
+Offer) right from its card, and close out the ones that went nowhere as
+Rejected, No Response (you never heard back), or Posting Closed (LinkedIn
+stopped accepting applications without a formal rejection).
 
 ![Pipeline tracking](images/feature_track_jobs.png){ .st-shot }
 

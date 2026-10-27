@@ -596,8 +596,13 @@ model = "gpt-oss:20b"
         with pytest.raises(SystemExit, match="unreachable"):
             runner.validate_setup()
 
-    def test_api_backend_missing_model_exits(self, tmp_path, monkeypatch):
-        """A reachable server that doesn't serve the model aborts before Pass 1."""
+    def test_api_backend_missing_model_warns_but_runs(self, tmp_path, monkeypatch):
+        """A model absent from /models warns instead of aborting the run.
+
+        Endpoints serving a fixed subscription set don't advertise those ids, so
+        absence isn't evidence the model is unavailable — the warm-up's real
+        inference is what catches a genuinely wrong id.
+        """
         self._setup(tmp_path, monkeypatch)
         _write_config('[[roles]]\nname = "PM"\ndefinition = "products"\n'
                       + BOILERPLATE_NO_LLM + self._API_CONFIG, boilerplate=False)
@@ -606,9 +611,15 @@ model = "gpt-oss:20b"
             return Mock(raise_for_status=lambda: None,
                         json=lambda: {"data": [{"id": "llama3:8b"}]})
 
+        logged = []
         monkeypatch.setattr(llm_api.httpx, "get", _fake_get)
-        with pytest.raises(SystemExit, match="does not serve a model with the exact id"):
-            runner.validate_setup()
+        monkeypatch.setattr(llm_api, "emit_log",
+                            lambda msg, **kw: logged.append((msg, kw)))
+        runner.validate_setup()  # must not raise
+        assert len(logged) == 1
+        msg, kwargs = logged[0]
+        assert kwargs["level"] == "warn"
+        assert "gpt-oss:20b" in msg and "llama3:8b" in msg
 
     def test_api_backend_bad_models_response_exits(self, tmp_path, monkeypatch):
         """A non-OpenAI /models response is a setup error, not a crash."""

@@ -44,20 +44,25 @@ _BLANK_LINE_RE = re.compile(r"\n\s*\n")
 
 _LANG = "en"
 
-# yasbd's rule set treats a period followed by whitespace and a capital
-# letter as a sentence boundary even inside a common abbreviation — confirmed
-# directly against real production data: "Full-time employees outside the
-# U.S. receive..." (correctly spaced, no concatenation involved) still gets
-# split into "...outside the U.S." / "receive..." with "U.S." occasionally
-# left standing alone as its own unit once neighbors are dropped. These are
-# the abbreviations actually observed (or reasonably expected) in scraped
-# LinkedIn postings' compensation/location boilerplate; their internal
-# periods are temporarily replaced with a sentinel before boundary detection
-# and restored afterward so they can never be mistaken for a sentence end.
-_ABBREVIATIONS = (
-    "U.S.", "U.K.", "e.g.", "i.e.", "etc.", "vs.", "Inc.", "Corp.", "Ltd.",
-    "Co.", "Mr.", "Mrs.", "Ms.", "Dr.", "Jr.", "Sr.", "Ph.D.", "M.S.", "B.S.",
-)
+# Abbreviations whose periods would otherwise produce a false sentence
+# boundary. Their internal periods are temporarily replaced with a sentinel
+# before _deconcatenate and boundary detection, and restored afterward.
+#
+# Only "Ph.D." still needs this, and not because of yasbd: our own
+# _DECONCAT_RE reads the "h.D" inside it as two run-together sentences
+# (lowercase, period, capital), so unprotected it's split mid-word into
+# "Ph." / "D. ..." in every position. yasbd itself keeps "Ph.D." intact.
+#
+# Everything else is left to yasbd (>= 0.15.1; measured on 1.0.2, issue #30).
+# Its upstream fixes keep abbreviations whole before a genuine proper-noun
+# continuation ("U.S. Government", "U.S. Persons", "Acme Inc. USA", "King
+# Jr. Day", "Sr. VP") while still splitting real sentence ends ("...work in
+# the U.S. Sponsorship is not available."). Protecting U.S./U.K./etc. here
+# would merge exactly those real boundaries, and protecting Inc./Jr./Dr./...
+# only stops _deconcatenate from repairing glued text like "Inc.Team". Add an
+# entry only alongside a test showing a false split on a realistic sentence
+# (not an ordinary word with a forced capital).
+_ABBREVIATIONS = ("Ph.D.",)
 _ABBREV_SENTINEL = "\x00"
 
 

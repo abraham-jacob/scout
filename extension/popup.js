@@ -199,6 +199,20 @@ function showOffline() {
 }
 
 /**
+ * Elapsed hours since a search's last run (null = never run, or its only
+ * runs saved zero jobs — see extension_searches() in app/main.py) → the
+ * last-run pill's modifier class and label text. Six hourly buckets ramp
+ * green (fresh) through yellow to red (stale); a "never" bucket is grey.
+ */
+function runPillInfo(hours) {
+  if (hours == null) return { cls: "never", label: "Never run" };
+  const buckets = [[4, "b0"], [8, "b1"], [12, "b2"], [16, "b3"], [20, "b4"]];
+  const cls = (buckets.find(([max]) => hours < max) || [null, "b5"])[1];
+  const label = hours < 1 ? "<1h ago" : `${Math.round(hours)}h ago`;
+  return { cls, label };
+}
+
+/**
  * Populate the saved-search list from GET /api/extension/searches's response.
  */
 function renderSearches(searches) {
@@ -215,10 +229,18 @@ function renderSearches(searches) {
     const row = document.createElement("div");
     row.className = "search-row";
 
+    // The name gets all the row's flexible space (CSS ellipsis handles
+    // overflow); the pill and Run button sit as a tight, non-shrinking
+    // group pinned to the right, via .search-actions below.
     const name = document.createElement("span");
     name.className = "search-name";
     name.textContent = search.name;
     name.title = search.name;
+
+    const { cls, label } = runPillInfo(search.elapsed_hours);
+    const pill = document.createElement("span");
+    pill.className = `run-pill run-pill--${cls}`;
+    pill.textContent = label;
 
     const runBtn = document.createElement("button");
     runBtn.className = "btn run-trigger";
@@ -226,8 +248,13 @@ function renderSearches(searches) {
     runBtn.disabled = harvesting;
     runBtn.addEventListener("click", () => runSavedSearch(search));
 
+    const actions = document.createElement("div");
+    actions.className = "search-actions";
+    actions.appendChild(pill);
+    actions.appendChild(runBtn);
+
     row.appendChild(name);
-    row.appendChild(runBtn);
+    row.appendChild(actions);
     searchListEl.appendChild(row);
   }
 }
@@ -633,12 +660,20 @@ function beginRun(targetLabel) {
 }
 
 /**
- * Re-enable every Run control once a harvest reaches a terminal phase.
+ * Re-enable every Run control once a harvest reaches a terminal phase, and
+ * quietly re-fetch the saved-search list so the just-run search's last-run
+ * pill updates without needing a popup reopen or manual Reload. Every
+ * terminal path (normal finish, no-jobs-to-ingest, a failed start, abort,
+ * and the status-poll's own completion branch) funnels through this one
+ * function, so this is the single place that needs the refresh wired in.
  */
 function endRun() {
   harvesting = false;
   harvestingTabId = null;
   applyRunTriggerState();
+  sendMessage({ type: "SCOUT_GET_SEARCHES" })
+    .then((data) => renderSearches(data.searches || []))
+    .catch(() => null); // best-effort — a stale pill isn't worth surfacing an error for
 }
 
 /**
